@@ -1,17 +1,19 @@
+# src/services/verifier_service.py
 """
 Geometric verification service that detects contradictions in VLM responses.
-Uses depth estimation and geometric analysis.
+Uses depth estimation, geometric analysis, and optional 3D reconstruction via fVDB.
 """
 import base64
-import numpy as np
-from typing import Dict, Any, List
 from io import BytesIO
+from typing import Any, Dict, List, Optional
 
 import cv2
-from PIL import Image, ImageDraw, ImageFont
+import numpy as np
+from PIL import Image, ImageDraw
 from loguru import logger
 
 from src.models.schemas import BoundingBox, SpatialMetrics, Contradiction
+from src.services.fvdb_3d_service import Fvdb3DReconstructionService
 
 
 class VerificationResult:
@@ -21,19 +23,26 @@ class VerificationResult:
         self,
         spatial_metrics: List[SpatialMetrics],
         contradictions: List[Contradiction],
-        proof_overlay: str
+        proof_overlay: str,
+        fvdb_debug: Optional[Dict[str, Any]] = None,
     ):
         self.spatial_metrics = spatial_metrics
         self.contradictions = contradictions
         self.proof_overlay = proof_overlay
+        self.fvdb_debug = fvdb_debug or {}
 
 
 class VerifierService:
     """Service for verifying VLM responses with geometric reasoning."""
 
-    def __init__(self, depth_service):
-        """Initialize verifier with depth service."""
+    def __init__(
+        self,
+        depth_service,
+        fvdb_3d_service: Optional[Fvdb3DReconstructionService] = None,
+    ):
+        """Initialize verifier with depth and optional fVDB 3D service."""
         self.depth_service = depth_service
+        self.fvdb_3d_service = fvdb_3d_service
 
         # Thresholds for contradiction detection
         self.relative_size_threshold = 0.3  # 30% difference
@@ -43,34 +52,45 @@ class VerifierService:
         self,
         image_base64: str,
         vlm_response: Dict[str, Any],
-        question: str
+        question: str,
     ) -> VerificationResult:
         """
-        Verify VLM response using depth geometry.
+        Verify VLM response using depth geometry (2.5D) and optional 3D metrics.
 
         Args:
-            image_base64: Original image
+            image_base64: Original image (base64)
             vlm_response: VLM response with answer and bounding boxes
             question: Original question
 
         Returns:
-            VerificationResult with metrics, contradictions, and proof overlay
+            VerificationResult with metrics, contradictions, proof overlay, and 3D debug info.
         """
         try:
             # Estimate depth map
             depth_map = await self.depth_service.estimate_depth(image_base64)
 
-            # Extract spatial metrics for each detected object
+            # Extract spatial metrics for each detected object (2.5D)
             spatial_metrics = self._compute_spatial_metrics(
                 depth_map,
-                vlm_response.get("bounding_boxes", [])
+                vlm_response.get("bounding_boxes", []),
             )
 
-            # Detect contradictions
+            # Augment with 3D centroids & distances if fVDB is enabled
+            fvdb_debug: Optional[Dict[str, Any]] = None
+            if self.fvdb_3d_service is not None and self.fvdb_3d_service.enabled:
+                fvdb_debug = self.verify_with_3d(
+                    depth_map=depth_map,
+                    bounding_boxes=vlm_response.get("bounding_boxes", []),
+                    spatial_metrics=spatial_metrics,
+                    answer=vlm_response.get("answer", ""),
+                    reasoning=vlm_response.get("reasoning", ""),
+                )
+
+            # Detect contradictions (uses 3D z if available)
             contradictions = self._detect_contradictions(
                 vlm_response["answer"],
                 spatial_metrics,
-                question
+                question,
             )
 
             # Create proof overlay
@@ -78,15 +98,19 @@ class VerifierService:
                 image_base64,
                 depth_map,
                 spatial_metrics,
-                contradictions
+                contradictions,
             )
 
-            logger.info(f"Verification complete: {len(contradictions)} contradictions found")
+            logger.info(
+                f"Verification complete: {len(contradictions)} contradictions found "
+                f"(3D enabled={fvdb_debug is not None and fvdb_debug.get('enabled', False)})"
+            )
 
             return VerificationResult(
                 spatial_metrics=spatial_metrics,
                 contradictions=contradictions,
-                proof_overlay=proof_overlay
+                proof_overlay=proof_overlay,
+                fvdb_debug=fvdb_debug,
             )
 
         except Exception as e:
@@ -96,10 +120,10 @@ class VerifierService:
     def _compute_spatial_metrics(
         self,
         depth_map: np.ndarray,
-        bounding_boxes: List[BoundingBox]
+        bounding_boxes: List[BoundingBox],
     ) -> List[SpatialMetrics]:
         """
-        Compute spatial metrics for detected objects.
+        Compute spatial metrics for detected objects using the depth map.
 
         Args:
             depth_map: Estimated depth map
@@ -108,7 +132,7 @@ class VerifierService:
         Returns:
             List of spatial metrics for each object
         """
-        metrics = []
+        metrics: List[SpatialMetrics] = []
 
         for i, bbox in enumerate(bounding_boxes):
             # Extract depth for this object
@@ -118,7 +142,7 @@ class VerifierService:
                 bbox.y1,
                 bbox.x2,
                 bbox.y2,
-                normalized=True
+                normalized=True,
             )
 
             # Estimate size (normalized units)
@@ -131,31 +155,87 @@ class VerifierService:
                 depth_std=std_depth,
                 estimated_distance=self._depth_to_distance(mean_depth),
                 estimated_size={"width": width, "height": height},
-                bounding_box=bbox
+                bounding_box=bbox,
             )
 
             metrics.append(metric)
 
         return metrics
 
+    def verify_with_3d(
+        self,
+        depth_map: np.ndarray,
+        bounding_boxes: List[BoundingBox],
+        spatial_metrics: List[SpatialMetrics],
+        answer: str,
+        reasoning: str,
+    ) -> Dict[str, Any]:
+        """
+        Run 3D reconstruction + analysis using fVDB and attach centroids to metrics.
+
+        Returns:
+            Dict with:
+              - enabled: bool
+              - voxel_count: int
+              - centroids_3d: list[Optional[dict(x,y,z)]]
+              - pairwise_distances: dict "i-j" -> float
+        """
+        if self.fvdb_3d_service is None or not self.fvdb_3d_service.enabled:
+            return {"enabled": False}
+
+        geom = self.fvdb_3d_service.compute_object_geometry(depth_map, bounding_boxes)
+        scene = geom.get("scene")
+        centroids = geom.get("centroids_3d", [])
+        pairwise = geom.get("pairwise_distances", {})
+
+        # Attach centroids to SpatialMetrics in-place
+        centroids_dicts: List[Optional[Dict[str, float]]] = []
+        for metric, c in zip(spatial_metrics, centroids):
+            if c is None:
+                metric.centroid_3d = None
+                centroids_dicts.append(None)
+            else:
+                centroid_dict = {
+                    "x": float(c[0]),
+                    "y": float(c[1]),
+                    "z": float(c[2]),
+                }
+                metric.centroid_3d = centroid_dict
+                centroids_dicts.append(centroid_dict)
+
+        # Serialize pairwise distances with friendly keys
+        pairwise_str_keys = {
+            f"{i}-{j}": float(d) for (i, j), d in pairwise.items()
+        }
+
+        debug = {
+            "enabled": True,
+            "voxel_count": int(scene.voxel_count) if scene is not None else 0,
+            "centroids_3d": centroids_dicts,
+            "pairwise_distances": pairwise_str_keys,
+        }
+
+        logger.info(
+            f"fVDB 3D analysis: enabled=True, "
+            f"voxel_count={debug['voxel_count']}, "
+            f"objects_with_centroids="
+            f"{sum(1 for c in centroids_dicts if c is not None)}"
+        )
+
+        return debug
+
     def _detect_contradictions(
         self,
         answer: str,
         spatial_metrics: List[SpatialMetrics],
-        question: str
+        question: str,
     ) -> List[Contradiction]:
         """
         Detect contradictions between VLM answer and geometric measurements.
 
-        Args:
-            answer: VLM's answer
-            spatial_metrics: Computed spatial metrics
-            question: Original question
-
-        Returns:
-            List of detected contradictions
+        Uses 3D centroid z when available; falls back to depth_mean.
         """
-        contradictions = []
+        contradictions: List[Contradiction] = []
 
         # Check relative distances
         if len(spatial_metrics) >= 2:
@@ -170,7 +250,9 @@ class VerifierService:
             )
 
         # Check object counts
-        count_contradictions = self._check_object_counts(answer, spatial_metrics, question)
+        count_contradictions = self._check_object_counts(
+            answer, spatial_metrics, question
+        )
         contradictions.extend(count_contradictions)
 
         return contradictions
@@ -178,12 +260,11 @@ class VerifierService:
     def _check_relative_distances(
         self,
         answer: str,
-        metrics: List[SpatialMetrics]
+        metrics: List[SpatialMetrics],
     ) -> List[Contradiction]:
-        """Check if claimed relative distances match depth measurements."""
-        contradictions = []
+        """Check if claimed relative distances match geometric measurements."""
+        contradictions: List[Contradiction] = []
 
-        # Simple heuristic: check if answer claims one object is "closer" or "further"
         answer_lower = answer.lower()
 
         for i in range(len(metrics)):
@@ -191,39 +272,54 @@ class VerifierService:
                 obj1 = metrics[i]
                 obj2 = metrics[j]
 
-                # Check depth difference
-                depth_diff = abs(obj1.depth_mean - obj2.depth_mean)
-                avg_depth = (obj1.depth_mean + obj2.depth_mean) / 2
+                # Prefer 3D centroid z if available; otherwise use depth_mean
+                z1 = (
+                    obj1.centroid_3d["z"]
+                    if obj1.centroid_3d is not None
+                    else obj1.depth_mean
+                )
+                z2 = (
+                    obj2.centroid_3d["z"]
+                    if obj2.centroid_3d is not None
+                    else obj2.depth_mean
+                )
+
+                depth_diff = abs(z1 - z2)
+                avg_depth = (z1 + z2) / 2 if (z1 + z2) != 0 else 0.0
 
                 if avg_depth > 0:
                     relative_diff = depth_diff / avg_depth
 
-                    # Look for distance claims in answer
                     if relative_diff > self.relative_distance_threshold:
                         # Significant depth difference detected
-                        closer_obj = obj1 if obj1.depth_mean < obj2.depth_mean else obj2
-                        further_obj = obj2 if obj1.depth_mean < obj2.depth_mean else obj1
+                        closer_obj = obj1 if z1 < z2 else obj2
+                        further_obj = obj2 if z1 < z2 else obj1
 
-                        # This is a simplified check - in practice, need NLP analysis
+                        # Simple heuristic: if answer claims "same distance"
                         if "same distance" in answer_lower or "equal distance" in answer_lower:
-                            contradictions.append(Contradiction(
-                                type="distance",
-                                claim=f"Objects at same distance",
-                                evidence=f"{closer_obj.object_id} (depth={closer_obj.depth_mean:.1f}) is significantly closer than {further_obj.object_id} (depth={further_obj.depth_mean:.1f})",
-                                severity=0.7
-                            ))
+                            contradictions.append(
+                                Contradiction(
+                                    type="distance",
+                                    claim="Objects at same distance",
+                                    evidence=(
+                                        f"{closer_obj.object_id} (z={z1:.2f if z1 < z2 else z2:.2f}) "
+                                        f"is significantly closer than "
+                                        f"{further_obj.object_id} (z={z2:.2f if z1 < z2 else z1:.2f})"
+                                    ),
+                                    severity=0.7,
+                                )
+                            )
 
         return contradictions
 
     def _check_relative_sizes(
         self,
         answer: str,
-        metrics: List[SpatialMetrics]
+        metrics: List[SpatialMetrics],
     ) -> List[Contradiction]:
         """Check if claimed relative sizes match measurements."""
-        contradictions = []
+        contradictions: List[Contradiction] = []
 
-        # Compare object sizes
         for i in range(len(metrics)):
             for j in range(i + 1, len(metrics)):
                 obj1 = metrics[i]
@@ -236,20 +332,23 @@ class VerifierService:
                     size_ratio = max(size1, size2) / min(size1, size2)
 
                     if size_ratio > (1 + self.relative_size_threshold):
-                        # Significant size difference
-                        # Check if answer claims they're similar size
                         answer_lower = answer.lower()
 
                         if "same size" in answer_lower or "similar size" in answer_lower:
                             larger = obj1 if size1 > size2 else obj2
                             smaller = obj2 if size1 > size2 else obj1
 
-                            contradictions.append(Contradiction(
-                                type="size",
-                                claim="Objects are similar size",
-                                evidence=f"{larger.object_id} is {size_ratio:.1f}x larger than {smaller.object_id}",
-                                severity=0.6
-                            ))
+                            contradictions.append(
+                                Contradiction(
+                                    type="size",
+                                    claim="Objects are similar size",
+                                    evidence=(
+                                        f"{larger.object_id} is {size_ratio:.1f}x "
+                                        f"larger than {smaller.object_id}"
+                                    ),
+                                    severity=0.6,
+                                )
+                            )
 
         return contradictions
 
@@ -257,26 +356,28 @@ class VerifierService:
         self,
         answer: str,
         metrics: List[SpatialMetrics],
-        question: str
+        question: str,
     ) -> List[Contradiction]:
         """Check if counted objects match detected objects."""
-        contradictions = []
+        contradictions: List[Contradiction] = []
 
-        # Extract numbers from answer
         import re
-        numbers = re.findall(r'\b\d+\b', answer)
+
+        numbers = re.findall(r"\b\d+\b", answer)
 
         if numbers and metrics:
-            claimed_count = int(numbers[0])  # First number in answer
+            claimed_count = int(numbers[0])
             detected_count = len(metrics)
 
             if claimed_count != detected_count and abs(claimed_count - detected_count) > 1:
-                contradictions.append(Contradiction(
-                    type="count",
-                    claim=f"Answer mentions {claimed_count} objects",
-                    evidence=f"Detected {detected_count} objects in image",
-                    severity=0.8
-                ))
+                contradictions.append(
+                    Contradiction(
+                        type="count",
+                        claim=f"Answer mentions {claimed_count} objects",
+                        evidence=f"Detected {detected_count} objects in image",
+                        severity=0.8,
+                    )
+                )
 
         return contradictions
 
@@ -285,19 +386,10 @@ class VerifierService:
         image_base64: str,
         depth_map: np.ndarray,
         spatial_metrics: List[SpatialMetrics],
-        contradictions: List[Contradiction]
+        contradictions: List[Contradiction],
     ) -> str:
         """
         Create proof overlay image with depth visualization and annotations.
-
-        Args:
-            image_base64: Original image
-            depth_map: Depth map
-            spatial_metrics: Spatial metrics
-            contradictions: Detected contradictions
-
-        Returns:
-            Base64-encoded proof overlay image
         """
         # Decode original image
         if "," in image_base64:
@@ -307,7 +399,14 @@ class VerifierService:
         img = Image.open(BytesIO(image_bytes))
 
         # Create depth visualization
-        depth_normalized = cv2.normalize(depth_map, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        depth_normalized = cv2.normalize(
+            depth_map,
+            None,
+            0,
+            255,
+            cv2.NORM_MINMAX,
+            dtype=cv2.CV_8U,
+        )
         depth_colored = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_MAGMA)
         depth_img = Image.fromarray(cv2.cvtColor(depth_colored, cv2.COLOR_BGR2RGB))
 
@@ -323,7 +422,6 @@ class VerifierService:
         # Draw annotations
         draw = ImageDraw.Draw(combined)
 
-        # Draw bounding boxes and metrics
         for metric in spatial_metrics:
             bbox = metric.bounding_box
             x1 = int(bbox.x1 * img.width)
@@ -336,8 +434,16 @@ class VerifierService:
             draw.text((x1, y1 - 15), f"{bbox.label or 'obj'}", fill="green")
 
             # Draw on depth map
-            draw.rectangle([x1 + img.width, y1, x2 + img.width, y2], outline="yellow", width=2)
-            draw.text((x1 + img.width, y1 - 15), f"d={metric.depth_mean:.1f}", fill="yellow")
+            draw.rectangle(
+                [x1 + img.width, y1, x2 + img.width, y2],
+                outline="yellow",
+                width=2,
+            )
+            draw.text(
+                (x1 + img.width, y1 - 15),
+                f"d={metric.depth_mean:.1f}",
+                fill="yellow",
+            )
 
         # Encode to base64
         buffered = BytesIO()
@@ -350,12 +456,5 @@ class VerifierService:
     def _depth_to_distance(depth_value: float) -> float:
         """
         Convert depth map value to estimated distance (rough approximation).
-
-        Args:
-            depth_value: Depth value from model
-
-        Returns:
-            Estimated distance in arbitrary units
         """
-        # This is a rough approximation - would need calibration for real distances
         return depth_value / 10.0
