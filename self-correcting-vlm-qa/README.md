@@ -337,66 +337,41 @@ If contradictions are found, **Claude engages in explicit self-reasoning**:
    - Revised answer (or reaffirmation if evidence is inconclusive)
    - Confidence score (0-1)
 
-## 🎨 Example Use Cases
+### 🎨 Example Use Cases
 
-We extend our AI Spatial Planner for Robots and Workers with a geometry-aware vision-language module that can verify and correct spatial reasoning from construction-site camera footage. Below are real operational scenarios where this unified spatial-intelligence system creates measurable business impact:
+We extend our AI Spatial Planner for Robots and Workers with a geometry-aware vision-language module that can verify and correct spatial reasoning from construction-site camera footage. These example use cases show how the system delivers real value on active industrial and construction sites:
 
-
-- **1. Real-Time Hazard Detection from Helmet Cameras**
+#### 1. Real-Time Hazard Detection from Helmet Cameras
 Workers wearing IronSite-style smart safety helmets capture live video.  
-The system identifies hazards—open trenches, heavy machinery swing-zones, blind-spot intersections—and verifies spatial claims using depth geometry.
+The system identifies hazards—open trenches, machinery swing zones, blind intersections—and verifies spatial claims using depth-based geometry.
 
-**Business Value:**  
-- Prevent injuries through earlier, more accurate hazard detection  
-- Reduce blind spots for safety supervisors  
-- Provide automatic documentation for OSHA compliance  
+**Business Value:** Prevent injuries, reduce blind spots, and automate OSHA-compliant safety documentation.
 
-
-- **2. Safe Path Planning for Robots and Workers**
+#### 2. Safe Path Planning for Robots and Workers
 Users upload or sketch a site map.  
-The system computes safe navigation paths, checking distances, obstacle proximity, and line-of-sight constraints.
+The system generates safe navigation paths and checks distances, obstacles, and line-of-sight constraints.
 
-**Business Value:**  
-- Reduce on-site collisions between humans and robots  
-- Optimize material transport routes for efficiency  
-- Support automation initiatives by ensuring robot paths are reliably safe  
+**Business Value:** Reduce collisions, optimize material transport routes, and support safe robot deployment.
 
+#### 3. Spatial Verification for Incident Prevention
+If the VLM misjudges distance or object placement, the geometric verifier measures the true scene, detects contradictions, and corrects the model’s reasoning.
 
-- **3. Spatial Verification for Incident Prevention**
-If the VLM misjudges distance, height, or object placement, the geometric verifier measures the true scene (from depth or multi-view geometry), detects contradictions, and corrects the model.
+**Business Value:** Reduce false negatives, improve safety-critical accuracy, and create trustworthy AI explanations.
 
-**Business Value:**  
-- Dramatically reduce false negatives (missed hazards)  
-- Provide trustworthy AI reasoning for safety-critical decisions  
-- Build an audit trail that improves insurance and risk-assessment outcomes  
+#### 4. Construction Workflow Optimization
+By analyzing spatial layouts, object positions, and worker movement, the system detects bottlenecks, unsafe traffic patterns, and inefficient tool/machine placement.
 
+**Business Value:** Improve productivity, reduce workflow delays, and increase equipment utilization.
 
-- **4. Construction Workflow Optimization**
-By analyzing spatial layouts, object positions, and worker movement, the system identifies congestion points, unsafe traffic patterns, and inefficient tool/equipment placement.
+#### 5. Automated Compliance & Safety Reporting
+The system verifies PPE usage, restricted-area access, and distance thresholds around hazardous equipment using camera footage or uploaded maps.
 
-**Business Value:**  
-- Reduce workflow delays  
-- Improve equipment utilization  
-- Provide data-driven layout planning  
+**Business Value:** Reduce manual auditing time, improve compliance accuracy, and give supervisors actionable insights.
 
+#### 6. Training & Simulation for Spatial Intelligence
+Teams can upload site diagrams or simulated scenes to train both human workers and robots in spatial reasoning and hazard recognition.
 
-- **5. Automated Compliance & Safety Reporting**
-The system continuously verifies PPE detection, restricted-area entry, and distance thresholds around dangerous equipment.
-
-**Business Value:**  
-- Remove hours of manual site auditing  
-- Increase compliance accuracy  
-- Give supervisors immediate feedback with trustworthy evidence  
-
-
-- **6. Training & Simulation for Spatial Intelligence**
-Teams can upload site diagrams or simulated scenes to test and improve both **human** and **robot** spatial reasoning.
-
-**Business Value:**  
-- Train workers on hazard recognition  
-- Test robots’ spatial navigation before deployment  
-- Lower onboarding time for new hires  
-
+**Business Value:** Improve onboarding efficiency, strengthen safety culture, and test robot navigation in a low-risk environment.
 
 
 ## 🤝 Contributing
