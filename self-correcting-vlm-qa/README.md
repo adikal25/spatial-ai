@@ -339,11 +339,29 @@ If contradictions are found, **Claude engages in explicit self-reasoning**:
 
 ## 🎨 Example Use Cases
 
-- **Autonomous vehicles**: Verify object distance estimates
-- **Robotics**: Validate spatial reasoning for manipulation
-- **Accessibility**: Describe scene layouts accurately
-- **Education**: Teach spatial reasoning with feedback
-- **Research**: Study VLM spatial understanding limitations
+Our platform applies spatial intelligence to deliver real business value for industrial and construction sites:
+
+- **Security & Intrusion Detection**  
+  Automatically detect when people or vehicles enter restricted zones and reduce false alarms.
+
+- **Worker Safety & Proximity Alerts**  
+  Track worker movement relative to hazardous equipment and generate real-time warnings.
+
+- **Equipment & Asset Tracking**  
+  Locate tools, vehicles, and machinery across the jobsite and reduce time wasted on retrieval.
+
+- **Traffic Flow Optimization**  
+  Analyze movement patterns to identify bottlenecks at gates, loading areas, and access points.
+
+- **Camera Coverage Optimization**  
+  Detect blind spots and ensure complete perimeter visibility without manual surveying.
+
+- **Compliance & Audit Automation**  
+  Automatically verify PPE usage, restricted-area access, and safety protocol adherence.
+
+- **Predictive Risk Analytics**  
+  Forecast high-risk areas by learning from historical movement patterns and spatial layouts.
+
 
 ## 🤝 Contributing
 
