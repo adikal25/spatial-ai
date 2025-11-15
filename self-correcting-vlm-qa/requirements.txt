@@ -26,7 +26,7 @@ scipy>=1.13.0
 
 # Image Processing
 opencv-contrib-python==4.9.0.80
-matplotlib==3.8.2
+matplotlib>=3.9.0
 
 # Streamlit Demo
 streamlit>=1.28.0
