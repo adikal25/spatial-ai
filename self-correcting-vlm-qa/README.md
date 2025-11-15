@@ -337,7 +337,7 @@ If contradictions are found, **Claude engages in explicit self-reasoning**:
    - Revised answer (or reaffirmation if evidence is inconclusive)
    - Confidence score (0-1)
 
-### 🎨 Example Use Cases
+## 🎨 Example Use Cases
 
 We extend our AI Spatial Planner for Robots and Workers with a geometry-aware vision-language module that can verify and correct spatial reasoning from construction-site camera footage. These example use cases show how the system delivers real value on active industrial and construction sites:
 
