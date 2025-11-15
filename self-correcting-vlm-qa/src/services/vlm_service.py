@@ -1,35 +1,30 @@
 """
-Vision-Language Model service using a Claude Sonnet vision model.
+Vision-Language Model service using OpenAI GPT-5-nano.
 Handles spatial question answering plus self-correction.
 """
 import json
 import os
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
-import anthropic
 from loguru import logger
+from openai import OpenAI
 
 from src.models.schemas import BoundingBox
 from src.utils.image_utils import resize_image_if_needed
 
 
 class VLMService:
-    """Service for interacting with multimodal VLM models via the Claude (Anthropic) client."""
+    """Service for interacting with OpenAI's multimodal GPT models."""
 
     def __init__(self):
-        # Prefer Anthropic-specific env vars but keep backward compatibility with previous OPENAI_* names
-        api_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("OPENAI_API_KEY")
+        api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
-            raise ValueError("ANTHROPIC_API_KEY (or legacy OPENAI_API_KEY) not found in environment variables")
+            raise ValueError("OPENAI_API_KEY not found in environment variables")
 
-        self.client = anthropic.Anthropic(api_key=api_key)
-
-        # Default to a Claude Sonnet vision-capable model
-        self.model = os.getenv("CLAUDE_VLM_MODEL") or os.getenv("OPENAI_VLM_MODEL", "claude-3.5-sonnet")
-        self.temperature = float(os.getenv("CLAUDE_TEMPERATURE") or os.getenv("OPENAI_TEMPERATURE", "0.1"))
-        self.max_output_tokens = int(
-            os.getenv("CLAUDE_MAX_OUTPUT_TOKENS") or os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "2048")
-        )
+        self.client = OpenAI(api_key=api_key)
+        self.model = os.getenv("OPENAI_VLM_MODEL", "gpt-5-nano")
+        self.temperature = float(os.getenv("OPENAI_TEMPERATURE", "0.1"))
+        self.max_output_tokens = int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "2048"))
 
     async def ask_with_boxes(
         self,
@@ -37,89 +32,99 @@ class VLMService:
         question: str,
         use_fallback: bool = False
     ) -> Dict[str, Any]:
-        """Ask the VLM a spatial question and request bounding boxes."""
-        return await self._ask_claude(image_base64, question)
+        """Ask GPT-5-nano a spatial question and request bounding boxes."""
+        return await self._ask_openai(image_base64, question)
 
-    async def _ask_claude(self, image_base64: str, question: str) -> Dict[str, Any]:
+    async def _ask_openai(self, image_base64: str, question: str) -> Dict[str, Any]:
         try:
-            logger.info("Processing image for VLM vision API (Claude)...")
+            logger.info("Processing image for OpenAI GPT-5-nano API...")
             processed_image = resize_image_if_needed(image_base64, max_size_mb=4.7, preserve_quality=True)
-            image_media_type, image_data = self._extract_media_type_and_data(processed_image)
+            data_url = self._ensure_data_url(processed_image)
 
             tools = [
                 {
-                    "name": "provide_spatial_answer",
-                    "description": (
-                        "Provide an answer to a spatial question with bounding boxes for detected objects."
-                    ),
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            "answer": {"type": "string"},
-                            "reasoning": {"type": "string"},
-                            "objects": {
-                                "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "label": {"type": "string"},
-                                        "x1": {"type": "number"},
-                                        "y1": {"type": "number"},
-                                        "x2": {"type": "number"},
-                                        "y2": {"type": "number"},
-                                        "confidence": {"type": "number"},
-                                    },
-                                    "required": ["label", "x1", "y1", "x2", "y2"],
-                                },
+                    "type": "function",
+                    "function": {
+                        "name": "provide_spatial_answer",
+                        "description": "Provide an answer to a spatial question with bounding boxes for detected objects.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "answer": {"type": "string"},
+                                "reasoning": {"type": "string"},
+                                "objects": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "label": {"type": "string"},
+                                            "x1": {"type": "number"},
+                                            "y1": {"type": "number"},
+                                            "x2": {"type": "number"},
+                                            "y2": {"type": "number"},
+                                            "confidence": {"type": "number"}
+                                        },
+                                        "required": ["label", "x1", "y1", "x2", "y2"]
+                                    }
+                                }
                             },
-                        },
-                        "required": ["answer", "reasoning", "objects"],
-                    },
+                            "required": ["answer", "reasoning", "objects"]
+                        }
+                    }
                 }
             ]
 
-            response = self.client.messages.create(
+            user_content = [
+                {
+                    "type": "text",
+                    "text": (
+                        "Analyze this image and answer the following spatial question.\n\n"
+                        f"Question: {question}\n\n"
+                        "Please detect relevant objects, describe spatial relationships, and use the provided function to return your answer."
+                    )
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": data_url}
+                }
+            ]
+
+            response = self.client.chat.completions.create(
                 model=self.model,
-                max_tokens=self.max_output_tokens,
-                temperature=self.temperature,
+               # temperature=self.temperature,
+             #   max_completion_tokens=self.max_output_tokens, # to run with gpt nano
                 tools=tools,
-                system="You are a precise spatial reasoner. Always return bounding boxes via the provided tool.",
+                tool_choice="auto",
                 messages=[
                     {
+                        "role": "system",
+                        "content": "You are a precise spatial reasoner. Always return bounding boxes via the provided tool."
+                    },
+                    {
                         "role": "user",
-                        "content": [
-                            {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": image_media_type,
-                                    "data": image_data,
-                                },
-                            },
-                            {
-                                "type": "text",
-                                "text": (
-                                    "Analyze this image and answer the following spatial question.\n\n"
-                                    f"Question: {question}\n\n"
-                                    "Please detect relevant objects, describe spatial relationships, "
-                                    "and use the provided tool to return your answer."
-                                ),
-                            },
-                        ],
+                        "content": user_content
                     }
-                ],
+                ]
             )
 
+            choice = response.choices[0]
             answer = ""
             reasoning = ""
             bounding_boxes: List[BoundingBox] = []
 
-            for block in response.content:
-                if block["type"] == "tool_use" and block.get("name") == "provide_spatial_answer":
-                    payload = block.get("input", {}) or {}
-                    answer = payload.get("answer", "") or answer
-                    reasoning = payload.get("reasoning", "") or reasoning
-                    objects = payload.get("objects", []) or []
+            if choice.message.tool_calls:
+                for call in choice.message.tool_calls:
+                    if call.function.name != "provide_spatial_answer":
+                        continue
+                    try:
+                        payload = json.loads(call.function.arguments)
+                    except json.JSONDecodeError as exc:
+                        logger.error(f"Failed to decode tool arguments: {exc}")
+                        continue
+
+                    answer = payload.get("answer", "")
+                    reasoning = payload.get("reasoning", "")
+                    objects = payload.get("objects", [])
 
                     bounding_boxes = [
                         BoundingBox(
@@ -128,20 +133,18 @@ class VLMService:
                             x2=obj["x2"],
                             y2=obj["y2"],
                             label=obj.get("label"),
-                            confidence=obj.get("confidence", 0.9),
+                            confidence=obj.get("confidence", 0.9)
                         )
                         for obj in objects
                     ]
-                elif block["type"] == "text":
-                    text = block.get("text", "")
-                    if text:
-                        reasoning = (reasoning + "\n" + text).strip() if reasoning else text.strip()
+            else:
+                message_content = choice.message.content
+                if isinstance(message_content, list):
+                    answer = "\n".join([part.get("text", "") for part in message_content if isinstance(part, dict)]).strip()
+                else:
+                    answer = message_content or ""
 
-            if not answer:
-                # Fall back to using concatenated text as the answer
-                answer = reasoning
-
-            logger.info(f"Claude response: {len(bounding_boxes)} objects detected")
+            logger.info(f"OpenAI response: {len(bounding_boxes)} objects detected")
             logger.debug(f"Reasoning: {reasoning}")
 
             return {
@@ -152,7 +155,7 @@ class VLMService:
             }
 
         except Exception as e:
-            logger.error(f"Error querying Claude: {str(e)}")
+            logger.error(f"Error querying OpenAI: {str(e)}")
             raise
 
     async def self_correct_with_reasoning(
@@ -164,13 +167,13 @@ class VLMService:
         contradictions: List[Dict[str, Any]],
         proof_overlay_base64: str
     ) -> Dict[str, Any]:
-        """Self-correction with explicit reasoning loop using the configured VLM."""
+        """Self-correction with explicit reasoning loop using GPT-5-nano."""
         try:
             processed_image = resize_image_if_needed(image_base64, max_size_mb=4.7, preserve_quality=True)
             processed_proof = resize_image_if_needed(proof_overlay_base64, max_size_mb=4.7, preserve_quality=True)
 
-            image_media_type, image_data = self._extract_media_type_and_data(processed_image)
-            proof_media_type, proof_data = self._extract_media_type_and_data(processed_proof)
+            image_data_url = self._ensure_data_url(processed_image)
+            proof_data_url = self._ensure_data_url(processed_proof)
 
             evidence_text = "\n\n".join([
                 (
@@ -198,7 +201,7 @@ You previously answered a spatial question about an image. Review your answer us
 ## Geometric Contradictions Found
 {evidence_text}
 
-        Follow this process:
+Follow this process:
 1. Review the original image
 2. Analyze the depth/verification overlay
 3. Compare the measurements with your reasoning
@@ -216,45 +219,27 @@ Respond with this format:
 [number between 0 and 1]
 """
 
-            response = self.client.messages.create(
+            response = self.client.chat.completions.create(
                 model=self.model,
-                max_tokens=self.max_output_tokens,
-                temperature=max(self.temperature, 0.2),
-                system="You are a meticulous assistant that double-checks spatial claims against evidence.",
+               # temperature=max(self.temperature, 0.2),
+               # max_completion_tokens=self.max_output_tokens, # to run with gpt nano max comletion tokens param changed from max_tokens
                 messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a meticulous assistant that double-checks spatial claims against evidence."
+                    },
                     {
                         "role": "user",
                         "content": [
                             {"type": "text", "text": prompt},
-                            {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": image_media_type,
-                                    "data": image_data,
-                                },
-                            },
-                            {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": proof_media_type,
-                                    "data": proof_data,
-                                },
-                            },
-                        ],
+                            {"type": "image_url", "image_url": {"url": image_data_url}},
+                            {"type": "image_url", "image_url": {"url": proof_data_url}}
+                        ]
                     }
-                ],
+                ]
             )
 
-            # Concatenate all text blocks into a single response string
-            full_response_parts: List[str] = []
-            for block in response.content:
-                if block["type"] == "text":
-                    text = block.get("text", "")
-                    if text:
-                        full_response_parts.append(text)
-            full_response = "\n".join(full_response_parts).strip()
+            full_response = response.choices[0].message.content or ""
             logger.info(f"Self-correction response received ({len(full_response)} chars)")
             logger.debug(f"Full response sample: {full_response[:500]}")
 
@@ -303,23 +288,3 @@ Respond with this format:
         if image_base64.startswith("data:image"):
             return image_base64
         return f"data:image/jpeg;base64,{image_base64}"
-
-    @staticmethod
-    def _extract_media_type_and_data(image_base64: str) -> Tuple[str, str]:
-        """
-        Extract media type and raw base64 data from a (possibly) data URL formatted image.
-
-        Anthropic's Claude API expects raw base64 data plus an explicit media type.
-        """
-        if image_base64.startswith("data:") and "," in image_base64:
-            header, data = image_base64.split(",", 1)
-            # Example header: "data:image/jpeg;base64"
-            try:
-                mime_part = header.split(":", 1)[1]
-                media_type = mime_part.split(";", 1)[0]
-            except (IndexError, ValueError):
-                media_type = "image/jpeg"
-            return media_type, data
-
-        # Fallback: assume jpeg if no explicit media type is present
-        return "image/jpeg", (image_base64.split(",", 1)[1] if "," in image_base64 else image_base64)

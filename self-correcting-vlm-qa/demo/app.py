@@ -37,17 +37,17 @@ API_URL = st.text_input(
 with st.sidebar:
     st.header("⚙️ Configuration")
 
-    st.markdown("**Model:** Claude Sonnet (vision-enabled)")
+    st.markdown("**Model:** OpenAI GPT-5 Nano")
 
     st.markdown("---")
     st.markdown("### About")
     st.markdown("""
     This system addresses VLM hallucinations in spatial reasoning by:
-    - Using Claude Sonnet with a self-reasoning loop
+    - Using GPT-5 Nano with a self-reasoning loop
     - Automatically verifying claims with depth geometry
     - Detecting contradictions in size, distance, and count
-    - Claude Sonnet self-corrects with geometric evidence
-    - Shows Claude Sonnet's self-reflection process
+    - GPT-5 Nano self-corrects with geometric evidence
+    - Shows GPT-5 Nano's self-reflection process
     """)
 
 # Main content
@@ -128,7 +128,7 @@ with col2:
                 st.success(result["revised_answer"])
 
                 if result.get("self_reflection"):
-                    with st.expander("🤔 Claude Sonnet's Self-Reflection"):
+                    with st.expander("🤔 GPT-5 Nano's Self-Reflection"):
                         st.markdown(result["self_reflection"])
 
                 st.metric(
@@ -249,7 +249,7 @@ st.markdown("---")
 st.markdown(
     """
     <div style="text-align: center; color: #666;">
-        Built with Claude Sonnet, FastAPI, MiDaS Depth Estimation, and Streamlit
+        Built with OpenAI GPT-5 Nano, FastAPI, MiDaS Depth Estimation, and Streamlit
     </div>
     """,
     unsafe_allow_html=True

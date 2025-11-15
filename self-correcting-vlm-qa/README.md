@@ -1,21 +1,21 @@
-# 🔍 Self-Correcting Vision-Language QA with Claude Sonnet
+# 🔍 Self-Correcting Vision-Language QA with GPT-5 Nano
 
-An automated verification and self-correction pipeline using **Claude Sonnet** that addresses spatial reasoning hallucinations through depth geometry and explicit self-reasoning loops.
+An automated verification and self-correction pipeline using **GPT-5 Nano** that addresses spatial reasoning hallucinations through depth geometry and explicit self-reasoning loops.
 
 ## 🎯 Overview
 
-Vision-Language Models (VLMs) often hallucinate about object sizes, distances, and counts, contradicting basic spatial geometry. This project implements a three-stage pipeline with **Claude Sonnet's self-reasoning capabilities**:
+Vision-Language Models (VLMs) often hallucinate about object sizes, distances, and counts, contradicting basic spatial geometry. This project implements a three-stage pipeline with **GPT-5 Nano's self-reasoning capabilities**:
 
-1. **Ask** (1-3s): Claude Sonnet generates initial response with bounding boxes and reasoning
+1. **Ask** (1-3s): GPT-5 Nano generates initial response with bounding boxes and reasoning
 2. **Verify** (1-4s): Depth estimation + geometric contradiction detection
-3. **Correct** (1-4s): Claude Sonnet engages in explicit self-reflection and correction
+3. **Correct** (1-4s): GPT-5 Nano engages in explicit self-reflection and correction
 
 ## ✨ Key Features
 
-- **Claude Sonnet-Powered**: Uses Claude Sonnet with vision capabilities and tool use
-- **Self-Reasoning Loop**: Claude Sonnet explicitly reflects on its mistakes and corrects them
+- **GPT-5 Nano-Powered**: Uses GPT-5 Nano with vision capabilities and tool use
+- **Self-Reasoning Loop**: GPT-5 Nano explicitly reflects on its mistakes and corrects them
 - **Automated Verification**: Uses MiDaS depth estimation to validate spatial claims
-- **Transparent Reasoning**: See Claude Sonnet's internal reasoning and self-reflection
+- **Transparent Reasoning**: See GPT-5 Nano's internal reasoning and self-reflection
 - **Real-time Processing**: Target latency <8s end-to-end
 - **Visual Proof**: Generates proof overlays with depth maps and annotations
 - **REST API**: FastAPI backend for easy integration
@@ -33,7 +33,7 @@ Vision-Language Models (VLMs) often hallucinate about object sizes, distances, a
 ┌─────────────────────────────────────────────────────────────┐
 │  Stage 1: ASK                                               │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ Claude Sonnet with Vision                           │   │
+│  │ GPT-5 Nano with Vision                          │   │
 │  │ - Tool use for structured bounding boxes             │   │
 │  │ - Initial spatial reasoning                          │   │
 │  │ - Explicit reasoning trace                           │   │
@@ -61,7 +61,7 @@ Vision-Language Models (VLMs) often hallucinate about object sizes, distances, a
 ┌─────────────────────────────────────────────────────────────┐
 │  Stage 3: SELF-CORRECTION LOOP (if contradictions found)    │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ Claude Sonnet Self-Reasoning Process                     │   │
+│  │ GPT-5 Nano Self-Reasoning Process                        │   │
 │  │ 1. Review: Re-examine original image                 │   │
 │  │ 2. Analyze: Study depth visualization                │   │
 │  │ 3. Evaluate: Compare reasoning vs evidence           │   │
@@ -89,7 +89,7 @@ Vision-Language Models (VLMs) often hallucinate about object sizes, distances, a
 ## 📋 Requirements
 
 - Python 3.11+
-- **OpenAI API key** (for Claude Sonnet via OpenAI-compatible API)
+- **OpenAI API key** (for GPT-5 Nano)
 - (Optional) GPU for faster depth estimation
 
 ## 🚀 Quick Start
@@ -157,7 +157,7 @@ Edit `config/.env` to customize:
 OPENAI_API_KEY=your_openai_api_key_here
 
 # OpenAI Configuration
-OPENAI_VLM_MODEL=claude-3.5-sonnet
+OPENAI_VLM_MODEL=gpt-5-nano
 OPENAI_TEMPERATURE=0.2
 OPENAI_MAX_OUTPUT_TOKENS=2048
 
@@ -290,9 +290,9 @@ self-correcting-vlm-qa/
 
 ## 🔍 How It Works
 
-### 1. Initial Claude Sonnet Query (Ask Stage)
+### 1. Initial GPT-5 Nano Query (Ask Stage)
 
-The system queries **Claude Sonnet** with the user's spatial question and image. Claude Sonnet responds with:
+The system queries **GPT-5 Nano** with the user's spatial question and image. GPT-5 Nano responds with:
 - Natural language answer
 - Internal reasoning about spatial relationships
 - Bounding boxes for detected objects (via tool use)
@@ -312,21 +312,21 @@ The verifier:
 
 ### 3. Self-Correction with Reasoning Loop (Correct Stage)
 
-If contradictions are found, **Claude Sonnet engages in explicit self-reasoning**:
-1. Claude Sonnet receives:
+If contradictions are found, **GPT-5 Nano engages in explicit self-reasoning**:
+1. GPT-5 Nano receives:
    - Original image
    - Depth visualization proof overlay
    - Its original answer and reasoning
    - Detailed contradictions with geometric evidence
 
-2. Claude Sonnet follows a structured self-reflection process:
+2. GPT-5 Nano follows a structured self-reflection process:
    - **Review**: Re-examines the original image
    - **Analyze**: Studies the depth map visualization
    - **Evaluate**: Compares its reasoning against geometric measurements
    - **Reflect**: Explicitly identifies where it went wrong
    - **Correct**: Provides revised answer with honest error acknowledgment
 
-3. Claude Sonnet outputs:
+3. GPT-5 Nano outputs:
    - Self-reflection explaining its thought process
    - Revised answer (or reaffirmation if evidence is inconclusive)
    - Confidence score (0-1)
@@ -355,7 +355,7 @@ MIT License - see LICENSE file for details
 
 ## 🙏 Acknowledgments
 
-- **OpenAI-compatible VLM**: Claude Sonnet with vision capabilities and self-reasoning
+- **OpenAI**: GPT-5 Nano with vision capabilities and self-reasoning
 - **MiDaS**: Intel ISL for depth estimation
 - **FastAPI**: Web framework
 - **Streamlit**: Demo UI framework
@@ -385,4 +385,4 @@ MIT License - see LICENSE file for details
 
 ---
 
-**Built with ❤️ for accurate spatial reasoning using Claude Sonnet's self-correction capabilities**
+**Built with ❤️ for accurate spatial reasoning using GPT-5 Nano's self-correction capabilities**
