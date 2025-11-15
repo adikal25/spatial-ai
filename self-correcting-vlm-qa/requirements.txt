@@ -8,9 +8,9 @@ python-multipart==0.0.6
 openai==1.35.14
 
 # Depth Estimation
-torch==2.1.2
-torchvision==0.16.2
-timm==0.9.12
+#DO NOT PUT TORCH IN HERE
+torchvision>=0.18.0
+timm>=0.9.12
 
 # Depth Models
 # MiDaS
