@@ -18,9 +18,23 @@ from src.services.depth_service import DepthService
 from src.services.verifier_service import VerifierService
 from src.services.correction_service import CorrectionService
 
-# Load environment variables from .env (root directory)
-env_path = Path(__file__).parent.parent.parent / ".env"
-load_dotenv(dotenv_path=env_path)
+# Load environment variables from .env (check multiple locations)
+project_root = Path(__file__).parent.parent.parent
+env_paths = [
+    project_root / ".env",  # Project root
+    project_root / "config" / ".env",  # Config directory
+]
+
+# Try loading from each location
+for env_path in env_paths:
+    if env_path.exists():
+        load_dotenv(dotenv_path=env_path)
+        logger.info(f"Loaded .env from {env_path}")
+        break
+else:
+    # Also try loading from environment variables directly (useful for deployment)
+    load_dotenv()
+    logger.info("Attempted to load from environment variables")
 
 
 # Global service instances

@@ -372,7 +372,6 @@ with st.sidebar:
     st.subheader("ℹ️ About")
     st.markdown("""
     **Powered by:**
-    - Claude Sonnet 4
     - MiDaS Depth Estimation
     - FastAPI Backend
     
@@ -398,7 +397,7 @@ if page == "🏠 Main Analysis":
     st.markdown("""
     <div class="main-header">
         <h1>🔍 Self-Correcting Vision-Language QA</h1>
-        <p>Powered by Claude Sonnet 4 • Automated Verification & Self-Correction Pipeline</p>
+        <p>Automated Verification & Self-Correction Pipeline</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -984,6 +983,6 @@ st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #666; padding: 1rem;">
     <p>🔍 Spatial AI - Self-Correcting Vision-Language QA</p>
-    <p style="font-size: 0.85rem;">Powered by Claude Sonnet 4 • MiDaS Depth Estimation • FastAPI • Streamlit</p>
+    <p style="font-size: 0.85rem;">MiDaS Depth Estimation • FastAPI • Streamlit</p>
 </div>
 """, unsafe_allow_html=True)
