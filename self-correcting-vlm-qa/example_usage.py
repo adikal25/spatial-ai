@@ -55,7 +55,7 @@ def main():
     """Example usage."""
     # Configuration
     API_URL = "http://localhost:8000"
-    IMAGE_PATH = "path/to/your/image.jpg"  # Change this to your image path
+    IMAGE_PATH = "/Users/danielbashirov/Downloads/IMG_1051.jpg"  # Change this to your image path
     QUESTION = "Which object is closer to the camera?"
 
     # Check if image exists
