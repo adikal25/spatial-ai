@@ -49,13 +49,32 @@ def ask_question(api_url: str, image_path: str, question: str, use_fallback: boo
         return response.json()
     else:
         raise Exception(f"API Error: {response.status_code} - {response.text}")
+    
+# example_usage.py (add near the bottom, before main())
+
+def demo_fvdb_3d(depth_map: np.ndarray, bboxes: list):
+    """Example: run fVDB 3D reconstruction on an existing depth map."""
+    from src.services.fvdb_3d_service import Fvdb3DReconstructionService
+
+    service = Fvdb3DReconstructionService()
+    if not service.enabled:
+        print("fVDB 3D reconstruction is disabled or fvdb is not installed.")
+        return
+
+    geom = service.compute_object_geometry(depth_map, bboxes)
+    scene = geom["scene"]
+
+    print(f"fVDB 3D: voxel_count={scene.voxel_count if scene else 0}")
+    for i, c in enumerate(geom["centroids_3d"]):
+        print(f"Object {i} centroid_3d:", None if c is None else c.tolist())
+    print("Pairwise distances:", {str(k): v for k, v in geom["pairwise_distances"].items()})
 
 
 def main():
     """Example usage."""
     # Configuration
     API_URL = "http://localhost:8000"
-    IMAGE_PATH = "path/to/your/image.jpg"  # Change this to your image path
+    IMAGE_PATH = "/Users/danielbashirov/Downloads/IMG_1051.jpg"  # Change this to your image path
     QUESTION = "Which object is closer to the camera?"
 
     # Check if image exists

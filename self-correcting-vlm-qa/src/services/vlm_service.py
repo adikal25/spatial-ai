@@ -1,31 +1,30 @@
 """
-Vision-Language Model service using Claude (Anthropic).
-Implements self-reasoning loop for spatial question answering.
+Vision-Language Model service using OpenAI GPT-5-nano.
+Handles spatial question answering plus self-correction.
 """
-import os
-import base64
 import json
-from typing import Dict, Any, List, Optional
-from io import BytesIO
+import os
+from typing import Any, Dict, List
 
-from anthropic import Anthropic
 from loguru import logger
+from openai import OpenAI
 
 from src.models.schemas import BoundingBox
 from src.utils.image_utils import resize_image_if_needed
 
 
 class VLMService:
-    """Service for interacting with Claude Vision."""
+    """Service for interacting with OpenAI's multimodal GPT models."""
 
     def __init__(self):
-        """Initialize VLM service with Anthropic client."""
-        api_key = os.getenv("ANTHROPIC_API_KEY")
+        api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
-            raise ValueError("ANTHROPIC_API_KEY not found in environment variables")
+            raise ValueError("OPENAI_API_KEY not found in environment variables")
 
-        self.client = Anthropic(api_key=api_key)
-        self.model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514")
+        self.client = OpenAI(api_key=api_key)
+        self.model = os.getenv("OPENAI_VLM_MODEL", "gpt-5-nano")
+        self.temperature = float(os.getenv("OPENAI_TEMPERATURE", "0.1"))
+        self.max_output_tokens = int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "2048"))
 
     async def ask_with_boxes(
         self,
@@ -33,166 +32,100 @@ class VLMService:
         question: str,
         use_fallback: bool = False
     ) -> Dict[str, Any]:
-        """
-        Ask Claude a spatial question and request bounding boxes for detected objects.
+        """Ask GPT-5-nano a spatial question and request bounding boxes."""
+        return await self._ask_openai(image_base64, question)
 
-        Args:
-            image_base64: Base64-encoded image
-            question: Spatial question about the image
-            use_fallback: Not used (kept for compatibility)
-
-        Returns:
-            Dictionary with answer, bounding boxes, and metadata
-        """
-        return await self._ask_claude(image_base64, question)
-
-    async def _ask_claude(self, image_base64: str, question: str) -> Dict[str, Any]:
-        """
-        Query Claude with tool use for structured bounding box output.
-
-        Args:
-            image_base64: Base64-encoded image
-            question: Spatial question
-
-        Returns:
-            Response with answer and bounding boxes
-        """
+    async def _ask_openai(self, image_base64: str, question: str) -> Dict[str, Any]:
         try:
-            logger.info("Processing image for Claude API...")
+            logger.info("Processing image for OpenAI GPT-5-nano API...")
+            processed_image = resize_image_if_needed(image_base64, max_size_mb=4.7, preserve_quality=True)
+            data_url = self._ensure_data_url(processed_image)
 
-            # Resize image if needed (Claude has 5MB base64 limit)
-            # Tries compression first, only resizes if necessary to preserve quality
-            # Using 4.7MB to have safety margin
-            image_base64 = resize_image_if_needed(image_base64, max_size_mb=4.7, preserve_quality=True)
-
-            logger.info("Image processing complete, sending to Claude...")
-
-            # Detect and clean base64 string
-            if image_base64.startswith("data:image"):
-                # Extract media type from data URL
-                data_url_parts = image_base64.split(",")
-                if len(data_url_parts) == 2:
-                    header = data_url_parts[0]
-                    if "image/png" in header:
-                        media_type = "image/png"
-                    elif "image/webp" in header:
-                        media_type = "image/webp"
-                    elif "image/gif" in header:
-                        media_type = "image/gif"
-                    else:
-                        media_type = "image/jpeg"
-                    image_base64 = data_url_parts[1]
-                else:
-                    media_type = "image/jpeg"
-            else:
-                # No data URL, assume JPEG (our compression outputs JPEG)
-                media_type = "image/jpeg"
-
-            # Define tool for bounding box extraction
             tools = [
                 {
-                    "name": "provide_spatial_answer",
-                    "description": "Provide an answer to a spatial question with bounding boxes for detected objects. Use this tool to structure your response with object locations.",
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            "answer": {
-                                "type": "string",
-                                "description": "Natural language answer to the spatial question"
-                            },
-                            "reasoning": {
-                                "type": "string",
-                                "description": "Your internal reasoning about the spatial relationships in the image"
-                            },
-                            "objects": {
-                                "type": "array",
-                                "description": "List of detected objects with bounding boxes (normalized coordinates 0-1)",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "label": {
-                                            "type": "string",
-                                            "description": "Object label/name"
+                    "type": "function",
+                    "function": {
+                        "name": "provide_spatial_answer",
+                        "description": "Provide an answer to a spatial question with bounding boxes for detected objects.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "answer": {"type": "string"},
+                                "reasoning": {"type": "string"},
+                                "objects": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "label": {"type": "string"},
+                                            "x1": {"type": "number"},
+                                            "y1": {"type": "number"},
+                                            "x2": {"type": "number"},
+                                            "y2": {"type": "number"},
+                                            "confidence": {"type": "number"}
                                         },
-                                        "x1": {
-                                            "type": "number",
-                                            "description": "Top-left x coordinate (0-1)"
-                                        },
-                                        "y1": {
-                                            "type": "number",
-                                            "description": "Top-left y coordinate (0-1)"
-                                        },
-                                        "x2": {
-                                            "type": "number",
-                                            "description": "Bottom-right x coordinate (0-1)"
-                                        },
-                                        "y2": {
-                                            "type": "number",
-                                            "description": "Bottom-right y coordinate (0-1)"
-                                        },
-                                        "confidence": {
-                                            "type": "number",
-                                            "description": "Confidence in detection (0-1)"
-                                        }
-                                    },
-                                    "required": ["label", "x1", "y1", "x2", "y2"]
+                                        "required": ["label", "x1", "y1", "x2", "y2"]
+                                    }
                                 }
-                            }
-                        },
-                        "required": ["answer", "reasoning", "objects"]
+                            },
+                            "required": ["answer", "reasoning", "objects"]
+                        }
                     }
                 }
             ]
 
-            # Create message with image
-            response = self.client.messages.create(
+            user_content = [
+                {
+                    "type": "text",
+                    "text": (
+                        "Analyze this image and answer the following spatial question.\n\n"
+                        f"Question: {question}\n\n"
+                        "Please detect relevant objects, describe spatial relationships, and use the provided function to return your answer."
+                    )
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": data_url}
+                }
+            ]
+
+            response = self.client.chat.completions.create(
                 model=self.model,
-                max_tokens=4096,
+               # temperature=self.temperature,
+             #   max_completion_tokens=self.max_output_tokens, # to run with gpt nano
                 tools=tools,
+                tool_choice="auto",
                 messages=[
                     {
+                        "role": "system",
+                        "content": "You are a precise spatial reasoner. Always return bounding boxes via the provided tool."
+                    },
+                    {
                         "role": "user",
-                        "content": [
-                            {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": media_type,
-                                    "data": image_base64
-                                }
-                            },
-                            {
-                                "type": "text",
-                                "text": f"""Analyze this image and answer the following spatial question:
-
-{question}
-
-Please:
-1. Carefully examine the spatial relationships in the image
-2. Identify and locate all relevant objects
-3. Provide bounding boxes for detected objects (use normalized coordinates 0-1)
-4. Use the provide_spatial_answer tool to structure your response
-
-Be precise about spatial relationships like distance, size, and position."""
-                            }
-                        ]
+                        "content": user_content
                     }
                 ]
             )
 
-            # Parse tool use response
+            choice = response.choices[0]
             answer = ""
             reasoning = ""
-            bounding_boxes = []
+            bounding_boxes: List[BoundingBox] = []
 
-            for block in response.content:
-                if block.type == "tool_use" and block.name == "provide_spatial_answer":
-                    tool_input = block.input
-                    answer = tool_input.get("answer", "")
-                    reasoning = tool_input.get("reasoning", "")
-                    objects = tool_input.get("objects", [])
+            if choice.message.tool_calls:
+                for call in choice.message.tool_calls:
+                    if call.function.name != "provide_spatial_answer":
+                        continue
+                    try:
+                        payload = json.loads(call.function.arguments)
+                    except json.JSONDecodeError as exc:
+                        logger.error(f"Failed to decode tool arguments: {exc}")
+                        continue
 
-                    # Convert to BoundingBox objects
+                    answer = payload.get("answer", "")
+                    reasoning = payload.get("reasoning", "")
+                    objects = payload.get("objects", [])
+
                     bounding_boxes = [
                         BoundingBox(
                             x1=obj["x1"],
@@ -204,12 +137,14 @@ Be precise about spatial relationships like distance, size, and position."""
                         )
                         for obj in objects
                     ]
-                elif block.type == "text":
-                    # Fallback to text response if no tool use
-                    if not answer:
-                        answer = block.text
+            else:
+                message_content = choice.message.content
+                if isinstance(message_content, list):
+                    answer = "\n".join([part.get("text", "") for part in message_content if isinstance(part, dict)]).strip()
+                else:
+                    answer = message_content or ""
 
-            logger.info(f"Claude response: {len(bounding_boxes)} objects detected")
+            logger.info(f"OpenAI response: {len(bounding_boxes)} objects detected")
             logger.debug(f"Reasoning: {reasoning}")
 
             return {
@@ -220,7 +155,7 @@ Be precise about spatial relationships like distance, size, and position."""
             }
 
         except Exception as e:
-            logger.error(f"Error querying Claude: {str(e)}")
+            logger.error(f"Error querying OpenAI: {str(e)}")
             raise
 
     async def self_correct_with_reasoning(
@@ -232,78 +167,27 @@ Be precise about spatial relationships like distance, size, and position."""
         contradictions: List[Dict[str, Any]],
         proof_overlay_base64: str
     ) -> Dict[str, Any]:
-        """
-        Self-correction with explicit reasoning loop.
-        Claude reviews its original answer against geometric evidence.
-
-        Args:
-            image_base64: Original image
-            original_question: Original question asked
-            original_answer: Claude's initial answer
-            original_reasoning: Claude's initial reasoning
-            contradictions: List of detected contradictions
-            proof_overlay_base64: Proof image with depth visualization
-
-        Returns:
-            Dictionary with revised answer, reasoning, and confidence
-        """
+        """Self-correction with explicit reasoning loop using GPT-5-nano."""
         try:
-            # Resize images if needed (Claude has 5MB base64 limit)
-            # Preserves quality - tries compression first before resizing
-            image_base64 = resize_image_if_needed(image_base64, max_size_mb=4.7, preserve_quality=True)
-            proof_overlay_base64 = resize_image_if_needed(proof_overlay_base64, max_size_mb=4.7, preserve_quality=True)
+            processed_image = resize_image_if_needed(image_base64, max_size_mb=4.7, preserve_quality=True)
+            processed_proof = resize_image_if_needed(proof_overlay_base64, max_size_mb=4.7, preserve_quality=True)
 
-            # Detect media types and clean base64 strings
-            if image_base64.startswith("data:image"):
-                parts = image_base64.split(",")
-                header = parts[0]
-                if "image/png" in header:
-                    image_media_type = "image/png"
-                elif "image/jpeg" in header or "image/jpg" in header:
-                    image_media_type = "image/jpeg"
-                else:
-                    image_media_type = "image/jpeg"
-                image_base64 = parts[1]
-            else:
-                image_media_type = "image/jpeg"
+            image_data_url = self._ensure_data_url(processed_image)
+            proof_data_url = self._ensure_data_url(processed_proof)
 
-            if proof_overlay_base64.startswith("data:image"):
-                parts = proof_overlay_base64.split(",")
-                header = parts[0]
-                if "image/png" in header:
-                    proof_media_type = "image/png"
-                elif "image/jpeg" in header or "image/jpg" in header:
-                    proof_media_type = "image/jpeg"
-                else:
-                    proof_media_type = "image/jpeg"
-                proof_overlay_base64 = parts[1]
-            else:
-                proof_media_type = "image/jpeg"
-
-            logger.info(f"Image formats - Original: {image_media_type}, Proof: {proof_media_type}")
-
-            # Build contradiction evidence
             evidence_text = "\n\n".join([
-                f"**Contradiction {i+1}: {c['type'].upper()}**\n"
-                f"- Your claim: {c['claim']}\n"
-                f"- Geometric evidence: {c['evidence']}\n"
-                f"- Severity: {c['severity']:.1%}"
+                (
+                    f"**Contradiction {i + 1}: {c['type'].upper()}**\n"
+                    f"- Your claim: {c['claim']}\n"
+                    f"- Geometric evidence: {c['evidence']}\n"
+                    f"- Severity: {c['severity']:.1%}"
+                )
                 for i, c in enumerate(contradictions)
-            ])
+            ]) or "No contradictions provided."
 
-            # Self-correction prompt with reasoning loop
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=4096,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": f"""# Self-Correction Task
+            prompt = f"""# Self-Correction Task
 
-You previously answered a spatial question about an image. Now you need to review your answer against geometric evidence from depth analysis.
+You previously answered a spatial question about an image. Review your answer using geometric evidence.
 
 ## Original Question
 {original_question}
@@ -317,115 +201,90 @@ You previously answered a spatial question about an image. Now you need to revie
 ## Geometric Contradictions Found
 {evidence_text}
 
-## Instructions
-I'm providing you with:
-1. The original image
-2. A proof overlay showing the depth map analysis
+Follow this process:
+1. Review the original image
+2. Analyze the depth/verification overlay
+3. Compare the measurements with your reasoning
+4. Reflect on potential mistakes
+5. Provide a corrected answer (or defend the original)
 
-Please engage in a self-reasoning process:
-
-1. **Review**: Re-examine the original image carefully
-2. **Analyze Depth**: Study the depth visualization (right side shows depth - warmer colors = closer)
-3. **Evaluate**: Compare your original reasoning with the geometric evidence
-4. **Reflect**: Identify where you may have been incorrect
-5. **Correct**: Provide a revised answer that accounts for the depth measurements
-
-Be honest - if you made an error, acknowledge it and correct it. If the geometric evidence is wrong or you still believe your answer, explain why.
-
-Provide your response in this format:
-
+Respond with this format:
 **Self-Reflection:**
-[Your analysis of what you got right/wrong and why]
+...
 
 **Revised Answer:**
-[Your corrected answer, or reaffirmation of original if you believe it's still correct]
+...
 
 **Confidence:**
-[A number from 0 to 1 indicating your confidence in the revised answer]"""
-                            },
-                            {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": image_media_type,
-                                    "data": image_base64
-                                }
-                            },
-                            {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": proof_media_type,
-                                    "data": proof_overlay_base64
-                                }
-                            }
+[number between 0 and 1]
+"""
+
+            response = self.client.chat.completions.create(
+                model=self.model,
+               # temperature=max(self.temperature, 0.2),
+               # max_completion_tokens=self.max_output_tokens, # to run with gpt nano max comletion tokens param changed from max_tokens
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a meticulous assistant that double-checks spatial claims against evidence."
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": image_data_url}},
+                            {"type": "image_url", "image_url": {"url": proof_data_url}}
                         ]
                     }
                 ]
             )
 
-            # Parse response
-            full_response = ""
-            for block in response.content:
-                if block.type == "text":
-                    full_response = block.text
-
+            full_response = response.choices[0].message.content or ""
             logger.info(f"Self-correction response received ({len(full_response)} chars)")
-            logger.debug(f"Full response: {full_response[:500]}...")
+            logger.debug(f"Full response sample: {full_response[:500]}")
 
-            # Extract components from response
             revised_answer = full_response
             self_reflection = ""
-            confidence = 0.7  # Default
+            confidence = 0.7
 
-            # Try to parse structured response (be flexible with formatting)
             import re
 
-            # Try with bold markers first
-            reflection_match = re.search(r'\*\*Self-Reflection:\*\*\s*(.+?)(?=\*\*Revised Answer:\*\*|\*\*Confidence:\*\*|$)', full_response, re.DOTALL)
-            answer_match = re.search(r'\*\*Revised Answer:\*\*\s*(.+?)(?=\*\*Confidence:\*\*|$)', full_response, re.DOTALL)
-            confidence_match = re.search(r'\*\*Confidence:\*\*\s*([0-9.]+)', full_response)
+            reflection_match = re.search(r"\*\*Self-Reflection:\*\*\s*(.+?)(?=\*\*Revised Answer:\*\*|\*\*Confidence:\*\*|$)", full_response, re.DOTALL)
+            answer_match = re.search(r"\*\*Revised Answer:\*\*\s*(.+?)(?=\*\*Confidence:\*\*|$)", full_response, re.DOTALL)
+            confidence_match = re.search(r"\*\*Confidence:\*\*\s*([0-9.]+)", full_response)
 
-            # Fallback to non-bold markers
             if not reflection_match:
-                reflection_match = re.search(r'Self-Reflection:\s*(.+?)(?=Revised Answer:|Confidence:|$)', full_response, re.DOTALL)
+                reflection_match = re.search(r"Self-Reflection:\s*(.+?)(?=Revised Answer:|Confidence:|$)", full_response, re.DOTALL)
             if not answer_match:
-                answer_match = re.search(r'Revised Answer:\s*(.+?)(?=Confidence:|$)', full_response, re.DOTALL)
+                answer_match = re.search(r"Revised Answer:\s*(.+?)(?=Confidence:|$)", full_response, re.DOTALL)
             if not confidence_match:
-                confidence_match = re.search(r'Confidence:\s*([0-9.]+)', full_response)
+                confidence_match = re.search(r"Confidence:\s*([0-9.]+)", full_response)
 
             if reflection_match:
                 self_reflection = reflection_match.group(1).strip()
-                logger.info(f"Extracted self-reflection ({len(self_reflection)} chars)")
-
             if answer_match:
                 revised_answer = answer_match.group(1).strip()
-                logger.info(f"Extracted revised answer ({len(revised_answer)} chars)")
-            else:
-                # If no structured answer found, use full response
-                logger.warning("Could not extract structured revised answer, using full response")
-                revised_answer = full_response
-
             if confidence_match:
-                conf_val = float(confidence_match.group(1))
-                confidence = conf_val if conf_val <= 1 else conf_val / 100
-                logger.info(f"Extracted confidence: {confidence}")
-
-            logger.info(f"Self-correction parsing complete - Confidence: {confidence}")
+                try:
+                    value = float(confidence_match.group(1))
+                    confidence = value if value <= 1 else value / 100.0
+                except ValueError:
+                    logger.debug("Could not parse confidence value, keeping default")
 
             return {
                 "revised_answer": revised_answer,
                 "self_reflection": self_reflection,
-                "confidence": confidence,
+                "confidence": min(max(confidence, 0.0), 1.0),
                 "full_reasoning": full_response
             }
 
         except Exception as e:
             logger.error(f"Error during self-correction: {str(e)}")
-            # Return original answer if correction fails
-            return {
-                "revised_answer": original_answer,
-                "self_reflection": "Error during self-correction",
-                "confidence": 0.5,
-                "full_reasoning": ""
-            }
+            raise
+
+    @staticmethod
+    def _ensure_data_url(image_base64: str) -> str:
+        """Ensure the image string has a proper data URL prefix."""
+        if image_base64.startswith("data:image"):
+            return image_base64
+        return f"data:image/jpeg;base64,{image_base64}"

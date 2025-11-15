@@ -30,13 +30,13 @@ def resize_image_if_needed(image_base64: str, max_size_mb: float = 4.8, preserve
     image_bytes = base64.b64decode(image_data)
     decoded_size_mb = len(image_bytes) / (1024 * 1024)
 
-    # Check the actual base64 size that will be sent to Claude
+    # Check the actual base64 size that will be sent to the VLM
     base64_size_mb = len(image_data) / (1024 * 1024)
 
     logger.info(f"Image size - Decoded: {decoded_size_mb:.2f}MB, Base64: {base64_size_mb:.2f}MB")
     logger.info(f"Max allowed size: {max_size_mb}MB")
 
-    # Check base64 size (what Claude actually receives)
+    # Check base64 size (what the VLM actually receives)
     if base64_size_mb <= max_size_mb:
         logger.info("Image base64 is within size limit, returning as-is")
         # Ensure it has proper data URL prefix with correct format
@@ -125,5 +125,5 @@ def resize_image_if_needed(image_base64: str, max_size_mb: float = 4.8, preserve
     logger.info(f"Image processed successfully: {decoded_size_mb:.2f}MB → {final_size_mb:.2f}MB")
 
     # Return with JPEG prefix since we converted to JPEG
-    # This ensures Claude receives the correct media type
+    # This ensures the VLM receives the correct media type
     return f"data:image/jpeg;base64,{resized_base64}"

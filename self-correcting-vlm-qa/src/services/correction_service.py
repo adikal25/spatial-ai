@@ -1,5 +1,5 @@
 """
-Self-correction service that makes Claude refine answers using geometric evidence.
+Self-correction service that makes the VLM refine answers using geometric evidence.
 Implements explicit self-reasoning loop.
 """
 from typing import Dict, Any, List
@@ -10,7 +10,7 @@ from src.models.schemas import Contradiction
 
 
 class CorrectionService:
-    """Service for Claude self-correction using geometric evidence."""
+    """Service for OpenAI VLM self-correction using geometric evidence."""
 
     def __init__(self, vlm_service):
         """Initialize correction service with VLM service."""
@@ -26,13 +26,13 @@ class CorrectionService:
         question: str
     ) -> Dict[str, Any]:
         """
-        Make Claude self-correct its answer using geometric evidence.
+        Make the VLM self-correct its answer using geometric evidence.
         Uses explicit self-reasoning loop.
 
         Args:
             image_base64: Original image
-            original_answer: Claude's initial answer
-            original_reasoning: Claude's initial reasoning
+            original_answer: Model's initial answer
+            original_reasoning: Model's initial reasoning
             contradictions: List of detected contradictions
             proof_overlay: Proof image with depth visualization
             question: Original question

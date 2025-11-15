@@ -17,7 +17,7 @@ from src.services.vlm_service import VLMService
 from src.services.depth_service import DepthService
 from src.services.verifier_service import VerifierService
 from src.services.correction_service import CorrectionService
-
+from src.services.fvdb_3d_service import Fvdb3DReconstructionService
 # Load environment variables from .env (root directory)
 env_path = Path(__file__).parent.parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
@@ -35,7 +35,11 @@ async def lifespan(app: FastAPI):
     # Initialize services
     services["vlm"] = VLMService()
     services["depth"] = DepthService()
-    services["verifier"] = VerifierService(services["depth"])
+    services["fvdb_3d"] = Fvdb3DReconstructionService()
+    services["verifier"] = VerifierService(
+        services["depth"],
+        services["fvdb_3d"],
+    )
     services["correction"] = CorrectionService(services["vlm"])
 
     # Load models
@@ -76,7 +80,9 @@ async def health_check():
         models_loaded={
             "vlm": services.get("vlm") is not None,
             "depth": services.get("depth") is not None and services["depth"].model is not None,
-        }
+            "fvdb_3d": services.get("fvdb_3d") is not None
+            and getattr(services["fvdb_3d"], "enabled", False),
+        },
     )
 
 
@@ -166,7 +172,8 @@ async def ask_question(request: QuestionRequest):
             metadata={
                 "model_used": initial_response.get("model", "unknown"),
                 "contradictions_found": len(verification_result.contradictions),
-                "original_reasoning": initial_response.get("reasoning", "")
+                "original_reasoning": initial_response.get("reasoning", ""), 
+                "fvdb_3d": verification_result.fvdb_debug, # new debug info
             }
         )
 
