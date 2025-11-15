@@ -1,12 +1,12 @@
 # 🔍 Self-Correcting Vision-Language QA with Claude
 
-An automated verification and self-correction pipeline using **Claude Sonnet 4** that addresses spatial reasoning hallucinations through depth geometry and explicit self-reasoning loops.
+An automated verification and self-correction pipeline using **Claude Sonnet 4** that addresses spatial reasoning hallucinations through depth geometry and explicit self-reasoning loops. This is a geometry-aware vision-language module where users can upload an image of a location and receive an analysis of positions of objects in the image. Suppose the VLM misjudges distance, size, or relative position (a common failure in safety-critical settings). In that case, our geometric verifier measures the scene, detects contradictions, and sends the evidence back to the VLM so it can self-correct with a revised, trustworthy answer. 
 
 ## 🎯 Overview
 
 Vision-Language Models (VLMs) often hallucinate about object sizes, distances, and counts, contradicting basic spatial geometry. This project implements a three-stage pipeline with **Claude's self-reasoning capabilities**:
 
-1. **Ask** (1-3s): Claude generates initial response with bounding boxes and reasoning
+1. **Ask** (1-3s): Claude generates an initial response with bounding boxes and reasoning
 2. **Verify** (1-4s): Depth estimation + geometric contradiction detection
 3. **Correct** (1-4s): Claude engages in explicit self-reflection and correction
 
