@@ -1,6 +1,7 @@
 """
 Streamlit demo application for Self-Correcting Vision-Language QA.
 """
+import os
 import base64
 import requests
 from io import BytesIO
@@ -27,10 +28,13 @@ The system operates in three stages:
 """)
 
 # API endpoint configuration
+# Use environment variable for deployed version, localhost for local dev
+default_api_url = os.getenv("API_URL", "http://localhost:8000")
+
 API_URL = st.text_input(
     "API Endpoint",
-    value="http://localhost:8000",
-    help="URL of the FastAPI backend"
+    value=default_api_url,
+    help="URL of the FastAPI backend (can be changed for testing)"
 )
 
 # Sidebar for configuration
@@ -117,18 +121,17 @@ with col2:
         result = st.session_state["result"]
 
         # Display results in tabs
-        tab1, tab2, tab3, tab4 = st.tabs(["📝 Answers", "🔍 Analysis", "📊 Metrics", "⏱️ Performance"])
+        tab1, tab2, tab3, tab4 = st.tabs(["📝 Answer", "🔍 Analysis", "📊 Metrics", "⏱️ Performance"])
 
         with tab1:
-            st.subheader("Initial Answer")
-            st.info(result["answer"])
-
+            # Display only the final answer (revised if available, otherwise original)
             if result.get("revised_answer"):
-                st.subheader("Revised Answer (After Self-Correction)")
+                # Self-correction occurred
+                st.subheader("Final Answer")
                 st.success(result["revised_answer"])
 
                 if result.get("self_reflection"):
-                    with st.expander("🤔 Claude's Self-Reflection"):
+                    with st.expander("🤔 Claude's Thought Process"):
                         st.markdown(result["self_reflection"])
 
                 st.metric(
@@ -137,7 +140,9 @@ with col2:
                     delta=None
                 )
             else:
-                st.success("No contradictions detected - initial answer verified!")
+                # No correction needed
+                st.subheader("Final Answer")
+                st.success(result["answer"])
 
         with tab2:
             st.subheader("Geometric Analysis")

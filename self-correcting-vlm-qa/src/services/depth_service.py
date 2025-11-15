@@ -1,5 +1,5 @@
 """
-Depth estimation service using MiDaS or ZoeDepth.
+Depth estimation service using Depth Anything V2, MiDaS, or ZoeDepth.
 Provides depth maps for geometric verification.
 """
 import os
@@ -12,6 +12,7 @@ import torch
 import cv2
 from PIL import Image
 from loguru import logger
+from transformers import pipeline
 
 
 class DepthService:
@@ -19,22 +20,28 @@ class DepthService:
 
     def __init__(self):
         """Initialize depth estimation service."""
-        self.model_name = os.getenv("DEPTH_MODEL", "midas_v3_small")
+        # Default to Depth Anything V2 (best performance)
+        self.model_name = os.getenv("DEPTH_MODEL", "depth_anything_v2")
         self.device = torch.device("cuda" if torch.cuda.is_available() and os.getenv("ENABLE_GPU", "true").lower() == "true" else "cpu")
         self.model = None
         self.transform = None
+        self.pipe = None  # For Depth Anything V2 pipeline
 
         logger.info(f"Depth service initialized with model: {self.model_name}, device: {self.device}")
 
     async def load_model(self):
         """Load depth estimation model."""
         try:
-            if "midas" in self.model_name.lower():
+            if "depth_anything" in self.model_name.lower():
+                await self._load_depth_anything_v2()
+            elif "midas" in self.model_name.lower():
                 await self._load_midas()
             elif "zoe" in self.model_name.lower():
                 await self._load_zoedepth()
             else:
-                raise ValueError(f"Unknown depth model: {self.model_name}")
+                # Default to Depth Anything V2 if unknown
+                logger.warning(f"Unknown depth model: {self.model_name}, defaulting to Depth Anything V2")
+                await self._load_depth_anything_v2()
 
             logger.info(f"Depth model {self.model_name} loaded successfully")
 
@@ -42,8 +49,33 @@ class DepthService:
             logger.error(f"Error loading depth model: {str(e)}")
             raise
 
+    async def _load_depth_anything_v2(self):
+        """Load Depth Anything V2 model (recommended - state-of-the-art)."""
+        # Determine model size based on config
+        # Options: small, base, large
+        model_size = "small"  # Default to small for speed
+
+        if "large" in self.model_name.lower():
+            model_size = "large"
+        elif "base" in self.model_name.lower():
+            model_size = "base"
+
+        # Depth Anything V2 model from Hugging Face
+        model_id = f"depth-anything/Depth-Anything-V2-{model_size.capitalize()}-hf"
+
+        logger.info(f"Loading Depth Anything V2 ({model_size}) from Hugging Face...")
+
+        # Create pipeline
+        self.pipe = pipeline(
+            task="depth-estimation",
+            model=model_id,
+            device=0 if self.device.type == "cuda" else -1
+        )
+
+        logger.info(f"Depth Anything V2 ({model_size}) loaded successfully")
+
     async def _load_midas(self):
-        """Load MiDaS depth estimation model."""
+        """Load MiDaS depth estimation model (legacy fallback)."""
         # Load MiDaS model from torch hub
         # Available models: DPT_Large, DPT_Hybrid, MiDaS_small
         model_type = "MiDaS_small"  # Default to small for speed
@@ -55,6 +87,7 @@ class DepthService:
         else:
             model_type = "MiDaS_small"
 
+        logger.info(f"Loading MiDaS model: {model_type}")
         self.model = torch.hub.load("intel-isl/MiDaS", model_type, pretrained=True)
         self.model.to(self.device)
         self.model.eval()
@@ -71,7 +104,7 @@ class DepthService:
         """Load ZoeDepth model (alternative)."""
         # This requires ZoeDepth to be installed
         # pip install git+https://github.com/isl-org/ZoeDepth.git
-        raise NotImplementedError("ZoeDepth support not yet implemented. Use MiDaS instead.")
+        raise NotImplementedError("ZoeDepth support not yet implemented. Use Depth Anything V2 or MiDaS instead.")
 
     async def estimate_depth(self, image_base64: str) -> np.ndarray:
         """
@@ -83,7 +116,7 @@ class DepthService:
         Returns:
             Depth map as numpy array (higher values = further away)
         """
-        if self.model is None:
+        if self.model is None and self.pipe is None:
             raise RuntimeError("Depth model not loaded. Call load_model() first.")
 
         try:
@@ -94,25 +127,38 @@ class DepthService:
             if img.mode != "RGB":
                 img = img.convert("RGB")
 
-            # Convert to numpy array
-            img_np = np.array(img)
+            # Use Depth Anything V2 if available
+            if self.pipe is not None:
+                # Use Hugging Face pipeline
+                result = self.pipe(img)
+                depth_map = np.array(result["depth"])
 
-            # Apply transforms
-            input_batch = self.transform(img_np).to(self.device)
+                # Normalize to float
+                if depth_map.dtype == np.uint8:
+                    depth_map = depth_map.astype(np.float32)
 
-            # Predict depth
-            with torch.no_grad():
-                prediction = self.model(input_batch)
-                prediction = torch.nn.functional.interpolate(
-                    prediction.unsqueeze(1),
-                    size=img_np.shape[:2],
-                    mode="bicubic",
-                    align_corners=False,
-                ).squeeze()
+                logger.info(f"Depth map estimated (Depth Anything V2): shape={depth_map.shape}, min={depth_map.min():.2f}, max={depth_map.max():.2f}")
 
-            depth_map = prediction.cpu().numpy()
+            else:
+                # Use MiDaS (legacy)
+                img_np = np.array(img)
 
-            logger.info(f"Depth map estimated: shape={depth_map.shape}, min={depth_map.min():.2f}, max={depth_map.max():.2f}")
+                # Apply transforms
+                input_batch = self.transform(img_np).to(self.device)
+
+                # Predict depth
+                with torch.no_grad():
+                    prediction = self.model(input_batch)
+                    prediction = torch.nn.functional.interpolate(
+                        prediction.unsqueeze(1),
+                        size=img_np.shape[:2],
+                        mode="bicubic",
+                        align_corners=False,
+                    ).squeeze()
+
+                depth_map = prediction.cpu().numpy()
+
+                logger.info(f"Depth map estimated (MiDaS): shape={depth_map.shape}, min={depth_map.min():.2f}, max={depth_map.max():.2f}")
 
             return depth_map
 

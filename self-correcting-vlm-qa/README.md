@@ -14,7 +14,8 @@ Vision-Language Models (VLMs) often hallucinate about object sizes, distances, a
 
 - **Claude-Powered**: Uses Claude Sonnet 4 with vision capabilities and tool use
 - **Self-Reasoning Loop**: Claude explicitly reflects on its mistakes and corrects them
-- **Automated Verification**: Uses MiDaS depth estimation to validate spatial claims
+- **Multi-Signal Verification**: Uses Depth Anything V2 + occlusion + position cues for reliable validation
+- **State-of-the-Art Depth**: Depth Anything V2 (2024) - significantly better than MiDaS
 - **Transparent Reasoning**: See Claude's internal reasoning and self-reflection
 - **Real-time Processing**: Target latency <8s end-to-end
 - **Visual Proof**: Generates proof overlays with depth maps and annotations
@@ -94,6 +95,8 @@ Vision-Language Models (VLMs) often hallucinate about object sizes, distances, a
 
 ## 🚀 Quick Start
 
+> **Want to deploy to the cloud?** See [DEPLOYMENT.md](DEPLOYMENT.md) for instructions.
+
 ### Simple Demo (Recommended)
 
 1. **Clone/navigate to the project**
@@ -160,8 +163,13 @@ ANTHROPIC_API_KEY=your_anthropic_api_key_here
 CLAUDE_MODEL=claude-sonnet-4-20250514
 
 # Depth Model Configuration
-DEPTH_MODEL=midas_v3_small
-# Options: midas_v3_small, midas_v3_dpt_large
+DEPTH_MODEL=depth_anything_v2
+# Options:
+#   depth_anything_v2 (recommended - state-of-the-art, default)
+#   depth_anything_v2_base (higher accuracy, slower)
+#   depth_anything_v2_large (best accuracy, slowest)
+#   midas_v3_small (legacy, faster but less accurate)
+#   midas_v3_dpt_large (legacy)
 
 # Performance Settings
 MAX_IMAGE_SIZE=1024
@@ -354,12 +362,14 @@ MIT License - see LICENSE file for details
 ## 🙏 Acknowledgments
 
 - **Anthropic**: Claude Sonnet 4 with vision capabilities and self-reasoning
-- **MiDaS**: Intel ISL for depth estimation
+- **Depth Anything V2**: State-of-the-art monocular depth estimation (2024)
+- **MiDaS**: Intel ISL for depth estimation (legacy support)
 - **FastAPI**: Web framework
 - **Streamlit**: Demo UI framework
 
 ## 📚 References
 
+- [Depth Anything V2: Foundation Models for Monocular Depth Estimation](https://depth-anything-v2.github.io/)
 - [MiDaS: Monocular Depth Estimation](https://github.com/isl-org/MiDaS)
 - [Claude 4 by Anthropic](https://www.anthropic.com/claude)
 - [Anthropic API Documentation](https://docs.anthropic.com/)
@@ -373,8 +383,10 @@ MIT License - see LICENSE file for details
 
 ## 🗺️ Roadmap
 
-- [ ] Support for more depth models (ZoeDepth, DepthAnything)
-- [ ] Advanced NLP for better contradiction detection
+- [x] Support for Depth Anything V2 (state-of-the-art)
+- [x] Multi-signal validation (depth + occlusion + position)
+- [ ] Support for ZoeDepth
+- [ ] Advanced semantic NLP for better contradiction detection
 - [ ] Multi-turn conversation support
 - [ ] Fine-tuned VLM for spatial reasoning
 - [ ] Batch processing support

@@ -1,45 +1,48 @@
 # Core Web Framework
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-pydantic==2.5.3
-python-multipart==0.0.6
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.3
+python-multipart>=0.0.6
 
 # Vision-Language Models
-anthropic==0.39.0
+anthropic>=0.39.0
 
-# Depth Estimation
-torch==2.1.2
-torchvision==0.16.2
-timm==0.9.12
+# Deep Learning & Depth Estimation
+torch>=2.1.2
+torchvision>=0.16.2
+timm>=0.9.12
 
 # Depth Models
-# MiDaS
-opencv-python==4.9.0.80
-# ZoeDepth (alternative)
-# git+https://github.com/isl-org/ZoeDepth.git
+# Depth Anything V2 (recommended - state-of-the-art)
+transformers>=4.37.2
+huggingface-hub>=0.20.0
 
-# Object Detection & Segmentation
-transformers==4.37.2
-pillow==10.2.0
-numpy==1.26.3
-scipy==1.12.0
-
-# Image Processing
-opencv-contrib-python==4.9.0.80
-matplotlib==3.8.2
+# Computer Vision & Image Processing
+opencv-python>=4.9.0.80
+pillow>=10.2.0
+numpy>=1.26.3
 
 # Streamlit Demo
 streamlit>=1.28.0
 
 # Utilities
-python-dotenv==1.0.1
-requests==2.31.0
-aiohttp==3.9.1
+python-dotenv>=1.0.1
+requests>=2.31.0
+aiohttp>=3.9.1
 
-# Testing
-pytest==8.0.0
-pytest-asyncio==0.23.4
-httpx==0.26.0
+# Testing (optional - for development)
+pytest>=8.0.0
+pytest-asyncio>=0.23.4
+httpx>=0.26.0
 
 # Logging & Monitoring
-loguru==0.7.2
+loguru>=0.7.2
+
+# Additional dependencies for production
+# Uncomment if deploying with gunicorn instead of uvicorn
+# gunicorn>=21.2.0
+
+# Optional: For better image processing (only if needed)
+# opencv-contrib-python>=4.9.0.80
+# scipy>=1.12.0
+# matplotlib>=3.8.2

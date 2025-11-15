@@ -163,17 +163,33 @@ class VLMService:
                             },
                             {
                                 "type": "text",
-                                "text": f"""Analyze this image and answer the following spatial question:
+                                "text": f"""Analyze this image and answer the following spatial question with careful reasoning:
 
-{question}
+**Question:** {question}
 
-Please:
-1. Carefully examine the spatial relationships in the image
-2. Identify and locate all relevant objects
-3. Provide bounding boxes for detected objects (use normalized coordinates 0-1)
-4. Use the provide_spatial_answer tool to structure your response
+**Instructions:**
+1. First, identify ALL relevant objects in the image
+2. For EACH object, provide:
+   - A clear label/name
+   - Accurate bounding box (normalized coordinates 0-1)
+   - Your estimate of its relative position (foreground/midground/background)
 
-Be precise about spatial relationships like distance, size, and position."""
+3. When making comparisons between objects, be EXPLICIT:
+   - Use clear comparative language: "Object A is closer/further than Object B"
+   - Use clear size language: "Object A is larger/smaller than Object B"
+   - Avoid vague terms like "similar" or "about the same" unless they truly are
+
+4. In your reasoning, explain your spatial judgment:
+   - What visual cues indicate depth? (occlusion, size perspective, position in frame)
+   - How do you estimate relative sizes?
+   - What makes you confident in your assessment?
+
+5. Use the provide_spatial_answer tool with:
+   - A direct, clear answer to the question
+   - Detailed reasoning explaining your spatial analysis
+   - All detected objects with accurate bounding boxes
+
+**Be specific and decisive** - avoid hedging unless genuinely uncertain."""
                             }
                         ]
                     }
@@ -301,9 +317,9 @@ Be precise about spatial relationships like distance, size, and position."""
                         "content": [
                             {
                                 "type": "text",
-                                "text": f"""# Self-Correction Task
+                                "text": f"""# Self-Correction with Multi-Signal Geometric Evidence
 
-You previously answered a spatial question about an image. Now you need to review your answer against geometric evidence from depth analysis.
+You previously answered a spatial question. Geometric analysis using **multiple visual cues** has found potential contradictions. The system only flags contradictions when multiple signals agree, so this evidence is reliable.
 
 ## Original Question
 {original_question}
@@ -314,34 +330,58 @@ You previously answered a spatial question about an image. Now you need to revie
 ## Your Original Reasoning
 {original_reasoning}
 
-## Geometric Contradictions Found
+## ⚠️ Contradictions Detected
 {evidence_text}
 
-## Instructions
-I'm providing you with:
-1. The original image
-2. A proof overlay showing the depth map analysis
+**Note**: These contradictions were detected using multiple validation signals (depth analysis, occlusion detection, vertical position), not just depth alone. The system only flags issues when there's strong supporting evidence.
 
-Please engage in a self-reasoning process:
+## Evidence Provided
+I'm showing you two images:
+1. **Left**: The original image
+2. **Right**: Depth map visualization
+   - **Warmer colors (red/yellow) = CLOSER to camera** (lower depth values)
+   - **Cooler colors (blue/purple) = FURTHER from camera** (higher depth values)
+   - Bounding boxes show detected objects with depth values
 
-1. **Review**: Re-examine the original image carefully
-2. **Analyze Depth**: Study the depth visualization (right side shows depth - warmer colors = closer)
-3. **Evaluate**: Compare your original reasoning with the geometric evidence
-4. **Reflect**: Identify where you may have been incorrect
-5. **Correct**: Provide a revised answer that accounts for the depth measurements
+## Your Task: Critical Self-Evaluation
 
-Be honest - if you made an error, acknowledge it and correct it. If the geometric evidence is wrong or you still believe your answer, explain why.
+Follow this reasoning process carefully:
 
-Provide your response in this format:
+### Step 1: Re-examine the Original Image
+- Look again at the spatial relationships
+- Check for occlusion (what's in front of what?)
+- Check vertical position (lower objects often closer)
+- Consider size perspective
+- Were there any ambiguities or assumptions you made?
+
+### Step 2: Analyze the Multi-Signal Evidence
+- Study the depth map on the right
+- Check if occlusion patterns support the depth readings
+- Verify if vertical positions align with distance claims
+- Do multiple cues point to the same conclusion?
+
+### Step 3: Identify Your Error (if any)
+- **If you were wrong**: What caused the error? (perspective illusion, wrong assumption, missed occlusion)
+- **If evidence conflicts**: Note that the system requires multiple signals to agree, so contradictions are likely valid
+- **If you're still correct**: Explain why - but consider that multiple independent cues are agreeing
+
+### Step 4: Provide Corrected Answer
+- Give a clear, direct answer to the original question
+- Reference the specific visual cues that support your answer
+- Be honest about uncertainty if it exists
+
+## Response Format
 
 **Self-Reflection:**
-[Your analysis of what you got right/wrong and why]
+[Detailed analysis: What visual cues did you observe? Did you make an error? If so, what caused it? Do the multiple signals (depth + occlusion + position) agree?]
 
 **Revised Answer:**
-[Your corrected answer, or reaffirmation of original if you believe it's still correct]
+[Your final answer to: "{original_question}" - Be clear and specific. If you were wrong, give the corrected answer. If you were right, reaffirm with explanation.]
 
 **Confidence:**
-[A number from 0 to 1 indicating your confidence in the revised answer]"""
+[A single number between 0.0 and 1.0]
+
+Remember: The system uses multiple independent visual cues and only flags contradictions with strong evidence. Take this feedback seriously."""
                             },
                             {
                                 "type": "image",
