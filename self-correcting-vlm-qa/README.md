@@ -273,6 +273,7 @@ Runs the full **Ask → Verify → Self-Correct** pipeline.
     "total_ms": 8140
   }
 }
+```
 
 **Key fields:**
 - `detected_objects` - Normalized coordinates (0‑1)
