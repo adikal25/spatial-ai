@@ -212,7 +212,7 @@ class Fvdb3DReconstructionService:
         fx, fy, cx, cy = self._get_intrinsics(w, h)
 
         centroids: List[Optional[np.ndarray]] = []
-        for bbox in bounding_boxes:
+        for idx, bbox in enumerate(bounding_boxes):
             c = self._bbox_to_centroid(
                 depth_map,
                 bbox,
@@ -221,6 +221,7 @@ class Fvdb3DReconstructionService:
                 cx,
                 cy,
                 scene=scene,
+                obj_index=idx,
             )
             centroids.append(c)
 
@@ -235,6 +236,23 @@ class Fvdb3DReconstructionService:
                     continue
                 d = float(np.linalg.norm(ci - cj))
                 pairwise[(i, j)] = d
+
+        if centroids:
+            logger.debug(
+                "fVDB centroid summary: %s",
+                [
+                    (
+                        idx,
+                        {"label": bbox.label, "centroid": None if c is None else [float(c[0]), float(c[1]), float(c[2])]},
+                    )
+                    for idx, (bbox, c) in enumerate(zip(bounding_boxes, centroids))
+                ],
+            )
+        if pairwise:
+            logger.debug(
+                "fVDB pairwise distances: %s",
+                {f"{i}-{j}": float(d) for (i, j), d in pairwise.items()},
+            )
 
         return {
             "scene": scene,
@@ -251,6 +269,7 @@ class Fvdb3DReconstructionService:
         cx: float,
         cy: float,
         scene: Optional[Scene3D] = None,
+        obj_index: Optional[int] = None,
     ) -> Optional[np.ndarray]:
         """
         Compute approximate 3D centroid for a bounding box region.
@@ -268,6 +287,8 @@ class Fvdb3DReconstructionService:
         if x2_px <= x1_px or y2_px <= y1_px:
             return None
 
+        bbox_label = bbox.label or f"obj_{obj_index}"
+
         if (
             scene is not None
             and scene.points is not None
@@ -281,11 +302,27 @@ class Fvdb3DReconstructionService:
                 & (uv[:, 1] >= float(y1_px))
                 & (uv[:, 1] < float(y2_px))
             )
+            voxels_in_box = int(mask.sum().item())
             if mask.any():
                 pts_in_box = pts[mask]
                 if pts_in_box.shape[0] > 0:
                     centroid = pts_in_box.mean(dim=0)
+                    logger.debug(
+                        "fVDB centroid via voxels: idx=%s label=%s voxels=%d centroid=(%.3f, %.3f, %.3f)",
+                        obj_index,
+                        bbox_label,
+                        voxels_in_box,
+                        float(centroid[0]),
+                        float(centroid[1]),
+                        float(centroid[2]),
+                    )
                     return centroid.detach().cpu().numpy()
+            logger.debug(
+                "fVDB centroid via voxels unavailable: idx=%s label=%s voxels=%d (falling back to depth map)",
+                obj_index,
+                bbox_label,
+                voxels_in_box,
+            )
 
         region = depth_map[y1_px:y2_px, x1_px:x2_px]
         if region.size == 0:
@@ -312,4 +349,18 @@ class Fvdb3DReconstructionService:
         Y = (v_mean - cy) * z_mean / fy
         Z = z_mean
 
-        return np.array([X, Y, Z], dtype=np.float32)
+        centroid = np.array([X, Y, Z], dtype=np.float32)
+        logger.debug(
+            "Centroid via depth map: idx=%s label=%s pixels=(%d,%d)->(%d,%d) centroid=(%.3f, %.3f, %.3f) mask_pixels=%d",
+            obj_index,
+            bbox_label,
+            x1_px,
+            y1_px,
+            x2_px,
+            y2_px,
+            float(X),
+            float(Y),
+            float(Z),
+            int(mask.sum()),
+        )
+        return centroid
