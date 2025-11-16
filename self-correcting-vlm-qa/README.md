@@ -85,10 +85,30 @@ streamlit run demo/app.py
 
 ## Why This Works
 
-- **Multi-signal verification:** Combines depth, occlusion, vertical position, and bounding box geometry. Contradictions require multiple signals to agree.
-- **State-of-the-art depth:** Uses Depth Anything V2 (small/base/large variants) with auto depth orientation detection. Falls back to MiDaS for CPU-only deployments.
-- **Transparent reasoning:** Claude provides explicit reasoning traces, and visual proof overlays show RGB + depth colormaps with bounding boxes.
-- **Production-ready:** Handles image resizing, provides detailed latency metrics, and includes health checks.
+### Depth Mode (2D)
+Uses monocular depth estimation to compute relative distances, occlusions, vertical alignment, and size cues. Multi-signal heuristics detect incorrect spatial claims.
+
+### Voxel Mode (3D, experimental)
+Uses NVIDIA FVDB to reconstruct a sparse voxel representation from the input image.  
+This enables:
+
+- 3D distances instead of pixel-depth  
+- Accurate behind/in-front reasoning  
+- Above/below in world coordinates  
+- Containment and adjacency checks  
+- Collision and free-space evaluation  
+
+### Self-Reflection Loop
+Claude receives:
+
+- Original reasoning  
+- Verified contradictions  
+- Geometry evidence (depth map or voxel render)  
+
+It then produces a corrected answer with a confidence score.
+
+This dramatically reduces spatial hallucination rates.
+
 
 ## Architecture
 
