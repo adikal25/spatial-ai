@@ -364,7 +364,7 @@ MIT License - see [LICENSE](LICENSE)
 - [Streamlit](https://streamlit.io/) - UI framework
 - PyTorch, Transformers, Pydantic
 
-##Acknowledgements
+## Acknowledgements
 
 Thank you to our sponsors, organizers, and collaborators for supporting this project.
 
