@@ -210,20 +210,41 @@ Environment variables (create `.env` in repo root from `config/.env.example`):
 ANTHROPIC_API_KEY=your_key_here
 CLAUDE_MODEL=claude-sonnet-4-20250514
 
-# Depth models
-DEPTH_MODEL=depth_anything_v2         # append _base or _large if desired
-DEPTH_ORIENTATION=auto                # auto | invert | raw
-ENABLE_GPU=true                       # set false for CPU-only
+# Geometry mode: depth | voxel
+GEOMETRY_MODE=depth
+
+# Depth mode settings
+DEPTH_MODEL=depth_anything_v2
+DEPTH_ORIENTATION=auto
+ENABLE_GPU=true
+
+# Voxel mode settings (experimental)
+VOXEL_BACKEND=fvdb
+VOXEL_RESOLUTION=128
+VOXEL_DOWNSCALE=2
+ENABLE_VOXEL_PROOF=true
 
 # Verification thresholds
 RELATIVE_SIZE_THRESHOLD=0.3
 RELATIVE_DISTANCE_THRESHOLD=0.3
 DEPTH_CONFIDENCE_THRESHOLD=0.4
 
-# API settings
-CORS_ORIGINS=http://localhost:8501,http://localhost:3000
+# API
+CORS_ORIGINS=http://localhost:8501
 MAX_IMAGE_SIZE=1024
 ```
+
+To enable 3D mode:
+
+```env
+GEOMETRY_MODE=voxel
+```
+
+### POST /ask
+Runs the full **Ask → Verify → Self-Correct** pipeline.
+
+- Supports **2D Depth Mode**
+- Supports **3D Voxel Mode (experimental)**
 
 ## API
 
@@ -231,54 +252,28 @@ MAX_IMAGE_SIZE=1024
 - `GET /health` – Returns status and loaded models
 - `POST /ask` – Runs the Ask → Verify → Correct pipeline
 
-### Example Request
-
-```bash
-curl -X POST http://localhost:8000/ask \
-  -H "Content-Type: application/json" \
-  -d '{
-    "image": "iVBORw0KGgoAAAANSUhEUgAAA...",  # base64 encoded
-    "question": "Which object is closer to the camera?"
-  }'
-```
-
-### Example Response
+### Example Response (Voxel Mode)
 
 ```json
 {
-  "answer": "The bus on the left is closest to the camera.",
-  "revised_answer": "After reviewing the depth overlay, the cyclist in the foreground is actually closest.",
-  "self_reflection": "I originally focused on size cues and ignored occlusion. The depth map shows the cyclist is nearer.",
-  "confidence": 0.82,
-  "proof_overlay": "data:image/png;base64,...",
-  "detected_objects": [
-    {"x1": 0.05, "y1": 0.32, "x2": 0.32, "y2": 0.88, "object_id": "obj_0_bicycle", "label": "cyclist"}
-  ],
-  "spatial_metrics": [
-    {
-      "object_id": "obj_0_bicycle",
-      "depth_mean": 18.4,
-      "depth_std": 2.1,
-      "estimated_distance": 18.4,
-      "estimated_size": {"width": 0.27, "height": 0.56}
-    }
-  ],
-  "contradictions": [
-    {
-      "type": "distance",
-      "claim": "The bus is closest to the camera.",
-      "evidence": "Cyclist depth 18.4 vs bus depth 41.2; occlusion shows cyclist in front.",
-      "severity": 0.72
-    }
-  ],
-  "latency_ms": {"ask_ms": 2350, "verify_ms": 3010, "correct_ms": 1875, "total_ms": 7235},
-  "metadata": {
-    "model_used": "claude-sonnet-4-20250514",
-    "contradictions_found": 1,
-    "original_reasoning": "I judged by object size..."
+  "geometry_mode": "voxel",
+  "answer": "The box is in front of the chair.",
+  "revised_answer": "The voxel grid shows the chair is actually in front of the box.",
+  "self_reflection": "I misinterpreted the size cue; 3D occupancy reveals true ordering.",
+  "confidence": 0.89,
+  "proof_overlay_voxel": "data:image/png;base64,...",
+  "voxel_metrics": {
+    "distance_3d": 1.92,
+    "occupancy_score": 0.81
+  },
+  "latency_ms": {
+    "ask_ms": 2140,
+    "verify_ms": 4020,
+    "correct_ms": 1980,
+    "total_ms": 8140
   }
 }
-```
+
 
 **Key fields:**
 - `detected_objects` - Normalized coordinates (0‑1)
@@ -290,56 +285,54 @@ See [example_usage.py](example_usage.py) for programmatic usage.
 
 ## Use Cases
 
-- **Autonomous perception QA:** Validate spatial statements in AV/robotics datasets
-- **Robotics manipulation:** Verify "which object is reachable/closer" before executing commands
-- **Accessibility tools:** Provide reliable scene descriptions with uncertainty indicators
-- **Educational demos:** Show how reasoning, geometry, and self-correction interact
-- **Research instrumentation:** Log contradiction rates to study VLM spatial hallucinations
+### Depth Mode (2D)
+- Accessible scene descriptions  
+- Construction site safety QA  
+- Validation of AV/robotics datasets  
+- Spatial reasoning benchmarks  
+- Classroom demos on depth + reasoning  
+
+### Voxel Mode (3D)
+- True 3D spatial QA for robotics  
+- Volumetric containment + collision reasoning  
+- Planning and manipulation QA  
+- Construction site 3D safety checks  
+- Research on VLM spatial hallucinations in 3D  
+- Indoor navigation and mapping QA  
+
+---
 
 ## Limitations
+- Depth-only mode cannot reason about true 3D thickness or containment  
+- FVDB voxel reconstruction is approximate from a single image  
+- Voxel mode requires a GPU for real-time inference  
+- Bounding boxes still come from Claude  
+- Test suite currently covers only API + schema validation  
 
-1. **Depth coverage** - Depth Anything V2 struggles with reflective/textureless regions
-2. **Bounding boxes** - Boxes come from Claude's output; missed objects can't be verified
-3. **Heuristic contradictions** - Simple threshold-based checks may miss nuanced spatial logic
-4. **Latency** - First request downloads ~100 MB of weights; CPU mode can take >10s
-5. **Limited tests** - Test suite only covers health + validation; no depth/contradiction regression fixtures
-
+---
 
 ## Extension Ideas
 
-1. **Multi-VLM ensemble** - Wire `use_fallback` to open-source models (LLaVA, GPT-4o) or use majority voting
-2. **Enhanced depth** - Implement ZoeDepth or multi-view depth reconstruction
-3. **Richer contradictions** - Add orientation, containment, metric reasoning ("object is 2m behind line")
-4. **Automated evaluation** - Create benchmark datasets to measure contradiction detection accuracy
-5. **Async processing** - Add queue/background workers for concurrent `/ask` requests
-6. **Metrics dashboard** - Persist stats to database with Prometheus/Grafana monitoring
+1. **Multi-view voxel fusion**  
+   Combine multiple images to reconstruct a fused 3D scene.
 
-## Future Directions
+2. **NeRF or 3D Gaussian Splatting backend**  
+   Provide more accurate geometry than coarse voxels.
 
-### 3D Voxel-Based Spatial Reasoning
+3. **Voxel-aware VLM tuning**  
+   Train Claude or an open VLM on voxel-grounded spatial reasoning tasks.
 
-Move beyond 2D depth maps to true 3D scene understanding using **NVIDIA FVDB** (Fast Voxel Database):
+4. **Richer 3D contradiction types**  
+   - inside vs. intersect  
+   - reachable vs. blocked  
+   - above vs. below (world coordinates)  
+   - behind/front adjacency reasoning  
 
-**Architecture:**
-1. **3D Scene Reconstruction** - Integrate NVIDIA FVDB to convert monocular images into sparse voxel representations, creating a volumetric 3D scene graph
-2. **Voxel-Level Verification** - Replace 2D bounding box verification with 3D occupancy grids, enabling accurate spatial relationship reasoning (containment, occlusion, relative positions)
-3. **Fine-tuned Vision Model** - Train a specialized vision model on carefully labeled 3D spatial datasets with ground-truth voxel annotations
-4. **Enhanced Self-Correction Loop** - Feed voxel-level contradictions back to the VLM with 3D proof visualizations (volumetric renderings, cross-sections)
+5. **Robotics integration**  
+   Use voxel-based checks for motion planning or grasping verification.
 
-**Benefits:**
-- True 3D spatial understanding vs. pseudo-3D depth estimation
-- Handle complex occlusions and multi-object spatial relationships
-- Support volumetric queries ("Is object A inside object B?", "What's between A and B?")
-- Enable robotic path planning and manipulation tasks with precise 3D coordinates
-
-**Implementation Path:**
-- Replace `DepthService` with `VoxelService` using NVIDIA FVDB + occupancy networks
-- Create curated dataset of images with ground-truth 3D voxel labels
-- Fine-tune vision model (e.g., ViT, CLIP) on voxel prediction task
-- Extend `VerifierService` to validate claims against 3D voxel grids
-- Add 3D visualization overlay (volumetric rendering or interactive 3D viewer)
-
-This would transform the system from depth-augmented 2D reasoning to full 3D geometric understanding.
+6. **Full async pipeline**  
+   Background workers and queues for high-throughput, parallel processing.
 
 ## Contributing
 
