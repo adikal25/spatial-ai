@@ -319,7 +319,7 @@ See [example_usage.py](example_usage.py) for programmatic usage.
 2. **NeRF or 3D Gaussian Splatting backend**  
    Provide more accurate geometry than coarse voxels.
 3. **TripoSG + voxel-aware VLM tuning**
-   Use TripoSG to generate fast, watertight 3D reconstructions from single images,
+   Use TripoSG and VR data to generate 3D reconstructions from single images,
    then convert these meshes into voxels to supervise or fine-tune VLMs on grounded 3D spatial reasoning tasks.
    This creates a large synthetic dataset of image → mesh → voxel → spatial-relation labels.
    
