@@ -318,20 +318,24 @@ See [example_usage.py](example_usage.py) for programmatic usage.
 
 2. **NeRF or 3D Gaussian Splatting backend**  
    Provide more accurate geometry than coarse voxels.
-
-3. **Voxel-aware VLM tuning**  
+3. **TripoSG + voxel-aware VLM tuning**
+   Use TripoSG to generate fast, watertight 3D reconstructions from single images,
+   then convert these meshes into voxels to supervise or fine-tune VLMs on grounded 3D spatial reasoning tasks.
+   This creates a large synthetic dataset of image → mesh → voxel → spatial-relation labels.
+   
+5. **Voxel-aware VLM tuning**  
    Train Claude or an open VLM on voxel-grounded spatial reasoning tasks.
 
-4. **Richer 3D contradiction types**  
+6. **Richer 3D contradiction types**  
    - inside vs. intersect  
    - reachable vs. blocked  
    - above vs. below (world coordinates)  
    - behind/front adjacency reasoning  
 
-5. **Robotics integration**  
+7. **Robotics integration**  
    Use voxel-based checks for motion planning or grasping verification.
 
-6. **Full async pipeline**  
+8. **Full async pipeline**  
    Background workers and queues for high-throughput, parallel processing.
 
 ## Contributing
