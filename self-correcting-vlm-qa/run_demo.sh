@@ -16,7 +16,7 @@ source venv/bin/activate
 # Check if .env exists
 if [ ! -f "config/.env" ]; then
     echo "❌ Error: config/.env not found!"
-    echo "Please copy config/.env.example to config/.env and add your OpenAI API key"
+    echo "Please copy config/.env.example to config/.env and add your Anthropic API key"
     exit 1
 fi
 

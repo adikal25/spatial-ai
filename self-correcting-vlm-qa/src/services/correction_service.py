@@ -10,7 +10,7 @@ from src.models.schemas import Contradiction
 
 
 class CorrectionService:
-    """Service for OpenAI VLM self-correction using geometric evidence."""
+    """Service for Claude-based self-correction using geometric evidence."""
 
     def __init__(self, vlm_service):
         """Initialize correction service with VLM service."""

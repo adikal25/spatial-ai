@@ -37,17 +37,17 @@ API_URL = st.text_input(
 with st.sidebar:
     st.header("⚙️ Configuration")
 
-    st.markdown("**Model:** OpenAI GPT-5 Nano")
+    st.markdown("**Model:** Anthropic Claude 3.5 Sonnet")
 
     st.markdown("---")
     st.markdown("### About")
     st.markdown("""
     This system addresses VLM hallucinations in spatial reasoning by:
-    - Using GPT-5 Nano with a self-reasoning loop
+    - Using Claude 3.5 Sonnet with a self-reasoning loop
     - Automatically verifying claims with depth geometry
     - Detecting contradictions in size, distance, and count
-    - GPT-5 Nano self-corrects with geometric evidence
-    - Shows GPT-5 Nano's self-reflection process
+    - Claude 3.5 Sonnet self-corrects with geometric evidence
+    - Shows Claude 3.5 Sonnet's self-reflection process
     """)
 
 # Main content
@@ -128,7 +128,7 @@ with col2:
                 st.success(result["revised_answer"])
 
                 if result.get("self_reflection"):
-                    with st.expander("🤔 GPT-5 Nano's Self-Reflection"):
+                    with st.expander("🤔 Claude 3.5 Sonnet's Self-Reflection"):
                         st.markdown(result["self_reflection"])
 
                 st.metric(
@@ -151,9 +151,6 @@ with col2:
                         st.write(f"**Claim**: {contradiction['claim']}")
                         st.write(f"**Evidence**: {contradiction['evidence']}")
                         st.progress(contradiction["severity"], text=f"Severity: {contradiction['severity']:.1%}")
-            else:
-                st.success("No contradictions found!")
-
             # Show proof overlay
             if result.get("proof_overlay"):
                 st.subheader("Proof Overlay (Image + Depth Map)")
@@ -249,7 +246,7 @@ st.markdown("---")
 st.markdown(
     """
     <div style="text-align: center; color: #666;">
-        Built with OpenAI GPT-5 Nano, FastAPI, MiDaS Depth Estimation, and Streamlit
+        Built with Anthropic Claude 3.5 Sonnet, FastAPI, MiDaS Depth Estimation, and Streamlit
     </div>
     """,
     unsafe_allow_html=True

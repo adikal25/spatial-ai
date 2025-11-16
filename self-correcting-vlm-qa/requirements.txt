@@ -5,7 +5,7 @@ pydantic==2.5.3
 python-multipart==0.0.6
 
 # Vision-Language Models
-openai==1.35.14
+anthropic==0.34.2
 
 # Depth Estimation
 #DO NOT PUT TORCH IN HERE

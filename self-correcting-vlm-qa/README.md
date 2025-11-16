@@ -1,21 +1,21 @@
-# 🔍 Self-Correcting Vision-Language QA with GPT-5 Nano
+# 🔍 Self-Correcting Vision-Language QA with Claude 3.5 Sonnet
 
-An automated verification and self-correction pipeline using **GPT-5 Nano** that addresses spatial reasoning hallucinations through depth geometry and explicit self-reasoning loops.
+An automated verification and self-correction pipeline using **Claude 3.5 Sonnet** that addresses spatial reasoning hallucinations through depth geometry and explicit self-reasoning loops.
 
 ## 🎯 Overview
 
-Vision-Language Models (VLMs) often hallucinate about object sizes, distances, and counts, contradicting basic spatial geometry. This project implements a three-stage pipeline with **GPT-5 Nano's self-reasoning capabilities**:
+Vision-Language Models (VLMs) often hallucinate about object sizes, distances, and counts, contradicting basic spatial geometry. This project implements a three-stage pipeline with **Claude 3.5 Sonnet's self-reasoning capabilities**:
 
-1. **Ask** (1-3s): GPT-5 Nano generates initial response with bounding boxes and reasoning
+1. **Ask** (1-3s): Claude 3.5 Sonnet generates initial response with bounding boxes and reasoning
 2. **Verify** (1-4s): Depth estimation + geometric contradiction detection
-3. **Correct** (1-4s): GPT-5 Nano engages in explicit self-reflection and correction
+3. **Correct** (1-4s): Claude 3.5 Sonnet engages in explicit self-reflection and correction
 
 ## ✨ Key Features
 
-- **GPT-5 Nano-Powered**: Uses GPT-5 Nano with vision capabilities and tool use
-- **Self-Reasoning Loop**: GPT-5 Nano explicitly reflects on its mistakes and corrects them
+- **Claude 3.5 Sonnet-Powered**: Uses Claude 3.5 Sonnet with vision capabilities and tool use
+- **Self-Reasoning Loop**: Claude 3.5 Sonnet explicitly reflects on its mistakes and corrects them
 - **Automated Verification**: Uses MiDaS depth estimation to validate spatial claims
-- **Transparent Reasoning**: See GPT-5 Nano's internal reasoning and self-reflection
+- **Transparent Reasoning**: See Claude 3.5 Sonnet's internal reasoning and self-reflection
 - **Real-time Processing**: Target latency <8s end-to-end
 - **Visual Proof**: Generates proof overlays with depth maps and annotations
 - **REST API**: FastAPI backend for easy integration
@@ -33,7 +33,7 @@ Vision-Language Models (VLMs) often hallucinate about object sizes, distances, a
 ┌─────────────────────────────────────────────────────────────┐
 │  Stage 1: ASK                                               │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ GPT-5 Nano with Vision                          │   │
+│  │ Claude 3.5 Sonnet with Vision                          │   │
 │  │ - Tool use for structured bounding boxes             │   │
 │  │ - Initial spatial reasoning                          │   │
 │  │ - Explicit reasoning trace                           │   │
@@ -61,7 +61,7 @@ Vision-Language Models (VLMs) often hallucinate about object sizes, distances, a
 ┌─────────────────────────────────────────────────────────────┐
 │  Stage 3: SELF-CORRECTION LOOP (if contradictions found)    │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ GPT-5 Nano Self-Reasoning Process                        │   │
+│  │ Claude 3.5 Sonnet Self-Reasoning Process                        │   │
 │  │ 1. Review: Re-examine original image                 │   │
 │  │ 2. Analyze: Study depth visualization                │   │
 │  │ 3. Evaluate: Compare reasoning vs evidence           │   │
@@ -89,7 +89,7 @@ Vision-Language Models (VLMs) often hallucinate about object sizes, distances, a
 ## 📋 Requirements
 
 - Python 3.11+
-- **OpenAI API key** (for GPT-5 Nano)
+- **Anthropic API key** (for Claude 3.5 Sonnet)
 - (Optional) GPU for faster depth estimation
 
 ## 🚀 Quick Start
@@ -106,10 +106,10 @@ cd self-correcting-vlm-qa
 ./setup.sh
 ```
 
-3. **Add your OpenAI API key**
+3. **Add your Anthropic API key**
 ```bash
 # Edit config/.env and add your key
-OPENAI_API_KEY=your_openai_api_key_here
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
 ```
 
 4. **Run the demo!**
@@ -135,7 +135,8 @@ pip install -r requirements.txt
 2. **Set up environment**
 ```bash
 cp config/.env.example config/.env
-# Edit config/.env and add your OpenAI API key
+# Edit config/.env and add your Anthropic API key
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
 ```
 
 3. **Run API (Terminal 1)**
@@ -154,12 +155,12 @@ Edit `config/.env` to customize:
 
 ```env
 # API Keys
-OPENAI_API_KEY=your_openai_api_key_here
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
 
-# OpenAI Configuration
-OPENAI_VLM_MODEL=gpt-4o
-OPENAI_TEMPERATURE=0.2
-OPENAI_MAX_OUTPUT_TOKENS=2048
+# Claude Configuration
+CLAUDE_VLM_MODEL=claude-3-5-sonnet-20240620
+CLAUDE_TEMPERATURE=0.2
+CLAUDE_MAX_OUTPUT_TOKENS=2048
 
 # Depth Model Configuration
 DEPTH_MODEL=midas_v3_small
@@ -290,9 +291,9 @@ self-correcting-vlm-qa/
 
 ## 🔍 How It Works
 
-### 1. Initial GPT-5 Nano Query (Ask Stage)
+### 1. Initial Claude 3.5 Sonnet Query (Ask Stage)
 
-The system queries **GPT-5 Nano** with the user's spatial question and image. GPT-5 Nano responds with:
+The system queries **Claude 3.5 Sonnet** with the user's spatial question and image. Claude 3.5 Sonnet responds with:
 - Natural language answer
 - Internal reasoning about spatial relationships
 - Bounding boxes for detected objects (via tool use)
@@ -312,21 +313,21 @@ The verifier:
 
 ### 3. Self-Correction with Reasoning Loop (Correct Stage)
 
-If contradictions are found, **GPT-5 Nano engages in explicit self-reasoning**:
-1. GPT-5 Nano receives:
+If contradictions are found, **Claude 3.5 Sonnet engages in explicit self-reasoning**:
+1. Claude 3.5 Sonnet receives:
    - Original image
    - Depth visualization proof overlay
    - Its original answer and reasoning
    - Detailed contradictions with geometric evidence
 
-2. GPT-5 Nano follows a structured self-reflection process:
+2. Claude 3.5 Sonnet follows a structured self-reflection process:
    - **Review**: Re-examines the original image
    - **Analyze**: Studies the depth map visualization
    - **Evaluate**: Compares its reasoning against geometric measurements
    - **Reflect**: Explicitly identifies where it went wrong
    - **Correct**: Provides revised answer with honest error acknowledgment
 
-3. GPT-5 Nano outputs:
+3. Claude 3.5 Sonnet outputs:
    - Self-reflection explaining its thought process
    - Revised answer (or reaffirmation if evidence is inconclusive)
    - Confidence score (0-1)
@@ -355,7 +356,7 @@ MIT License - see LICENSE file for details
 
 ## 🙏 Acknowledgments
 
-- **OpenAI**: GPT-5 Nano with vision capabilities and self-reasoning
+- **Anthropic**: Claude 3.5 Sonnet with vision capabilities and self-reasoning
 - **MiDaS**: Intel ISL for depth estimation
 - **FastAPI**: Web framework
 - **Streamlit**: Demo UI framework
@@ -363,8 +364,8 @@ MIT License - see LICENSE file for details
 ## 📚 References
 
 - [MiDaS: Monocular Depth Estimation](https://github.com/isl-org/MiDaS)
-- [OpenAI GPT Models](https://platform.openai.com/docs/models)
-- [OpenAI API Documentation](https://platform.openai.com/docs/overview)
+- [Anthropic Claude Models](https://docs.anthropic.com/en/docs/about-claude/models)
+- [Anthropic API Documentation](https://docs.anthropic.com/)
 
 ## 🐛 Known Limitations
 
@@ -385,4 +386,4 @@ MIT License - see LICENSE file for details
 
 ---
 
-**Built with ❤️ for accurate spatial reasoning using GPT-5 Nano's self-correction capabilities**
+**Built with ❤️ for accurate spatial reasoning using Claude 3.5 Sonnet's self-correction capabilities**

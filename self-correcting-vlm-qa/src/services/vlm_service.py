@@ -1,161 +1,112 @@
 """
-Vision-Language Model service using OpenAI GPT-5-nano.
+Vision-Language Model service using Anthropic Claude models.
 Handles spatial question answering plus self-correction.
 """
 import json
 import os
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, List, Optional, Tuple
 
+from anthropic import Anthropic
 from loguru import logger
-from openai import OpenAI
 
 from src.models.schemas import BoundingBox
 from src.utils.image_utils import resize_image_if_needed
 
 
 class VLMService:
-    """Service for interacting with OpenAI's multimodal GPT models."""
+    """Service for interacting with Anthropic's multimodal Claude models."""
 
     def __init__(self):
-        api_key = os.getenv("OPENAI_API_KEY")
+        api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
-            raise ValueError("OPENAI_API_KEY not found in environment variables")
+            raise ValueError("ANTHROPIC_API_KEY not found in environment variables")
 
-        self.client = OpenAI(api_key=api_key)
-        self.model = os.getenv("OPENAI_VLM_MODEL", "gpt-4o")
-        self.temperature = float(os.getenv("OPENAI_TEMPERATURE", "0.1"))
-        self.max_output_tokens = int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "2048"))
+        self.client = Anthropic(api_key=api_key)
+        self.model = os.getenv("CLAUDE_VLM_MODEL", "claude-3-5-sonnet-20240620")
+        self.temperature = float(os.getenv("CLAUDE_TEMPERATURE", "0.2"))
+        self.max_output_tokens = int(os.getenv("CLAUDE_MAX_OUTPUT_TOKENS", "2048"))
 
     async def ask_with_boxes(
         self,
         image_base64: str,
         question: str,
-        use_fallback: bool = False
+        use_fallback: bool = False,
     ) -> Dict[str, Any]:
-        """Ask GPT-5-nano a spatial question and request bounding boxes."""
-        return await self._ask_openai(image_base64, question)
+        """Ask Claude a spatial question and request structured bounding boxes."""
+        return await self._ask_claude(image_base64, question)
 
-    async def _ask_openai(self, image_base64: str, question: str) -> Dict[str, Any]:
+    async def _ask_claude(self, image_base64: str, question: str) -> Dict[str, Any]:
         try:
-            logger.info("Processing image for OpenAI GPT-5-nano API...")
-            processed_image = resize_image_if_needed(image_base64, max_size_mb=4.7, preserve_quality=True)
-            data_url = self._ensure_data_url(processed_image)
+            logger.info("Processing image for Claude vision API...")
+            processed_image = resize_image_if_needed(
+                image_base64,
+                max_size_mb=4.7,
+                preserve_quality=True,
+            )
+            image_block = self._build_claude_image_content(processed_image)
 
-            tools = [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "provide_spatial_answer",
-                        "description": "Provide an answer to a spatial question with bounding boxes for detected objects.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "answer": {"type": "string"},
-                                "reasoning": {"type": "string"},
-                                "objects": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object",
-                                        "properties": {
-                                            "label": {"type": "string"},
-                                            "x1": {"type": "number"},
-                                            "y1": {"type": "number"},
-                                            "x2": {"type": "number"},
-                                            "y2": {"type": "number"},
-                                            "confidence": {"type": "number"}
-                                        },
-                                        "required": ["label", "x1", "y1", "x2", "y2"]
-                                    }
-                                }
-                            },
-                            "required": ["answer", "reasoning", "objects"]
-                        }
-                    }
-                }
-            ]
-
-            user_content = [
-                {
-                    "type": "text",
-                    "text": (
-                        "Analyze this image and answer the following spatial question.\n\n"
-                        f"Question: {question}\n\n"
-                        "Please detect relevant objects, describe spatial relationships, and use the provided function to return your answer."
-                    )
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {"url": data_url}
-                }
-            ]
-
-            response = self.client.chat.completions.create(
-                model=self.model,
-               # temperature=self.temperature,
-             #   max_completion_tokens=self.max_output_tokens, # to run with gpt nano
-                tools=tools,
-                tool_choice="auto",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a precise spatial reasoner. Always return bounding boxes via the provided tool."
-                    },
-                    {
-                        "role": "user",
-                        "content": user_content
-                    }
-                ]
+            prompt = (
+                "Analyze this image and answer the spatial question below. "
+                "Respond strictly with JSON containing: answer (string), reasoning (string), "
+                "and objects (array of {label, x1, y1, x2, y2, confidence}). "
+                "Bounding box coordinates must be normalized between 0 and 1. "
+                "Do not include any text outside the JSON response.\n\n"
+                f"Question: {question}"
             )
 
-            choice = response.choices[0]
-            answer = ""
-            reasoning = ""
+            response = self.client.messages.create(
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_output_tokens,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            image_block,
+                        ],
+                    }
+                ],
+            )
+
+            response_text = self._extract_text_from_response(response)
+            payload = self._parse_structured_response(response_text)
+
+            answer = payload.get("answer", "").strip()
+            reasoning = payload.get("reasoning", "").strip()
+            objects = payload.get("objects", []) or []
+
             bounding_boxes: List[BoundingBox] = []
+            for obj in objects:
+                try:
+                    bbox = BoundingBox(
+                        x1=float(obj["x1"]),
+                        y1=float(obj["y1"]),
+                        x2=float(obj["x2"]),
+                        y2=float(obj["y2"]),
+                        label=obj.get("label"),
+                        confidence=obj.get("confidence"),
+                    )
+                    bounding_boxes.append(bbox)
+                except (KeyError, TypeError, ValueError) as exc:
+                    logger.warning(f"Skipping malformed bounding box: {exc}")
 
-            if choice.message.tool_calls:
-                for call in choice.message.tool_calls:
-                    if call.function.name != "provide_spatial_answer":
-                        continue
-                    try:
-                        payload = json.loads(call.function.arguments)
-                    except json.JSONDecodeError as exc:
-                        logger.error(f"Failed to decode tool arguments: {exc}")
-                        continue
-
-                    answer = payload.get("answer", "")
-                    reasoning = payload.get("reasoning", "")
-                    objects = payload.get("objects", [])
-
-                    bounding_boxes = [
-                        BoundingBox(
-                            x1=obj["x1"],
-                            y1=obj["y1"],
-                            x2=obj["x2"],
-                            y2=obj["y2"],
-                            label=obj.get("label"),
-                            confidence=obj.get("confidence", 0.9)
-                        )
-                        for obj in objects
-                    ]
-            else:
-                message_content = choice.message.content
-                if isinstance(message_content, list):
-                    answer = "\n".join([part.get("text", "") for part in message_content if isinstance(part, dict)]).strip()
-                else:
-                    answer = message_content or ""
-
-            logger.info(f"OpenAI response: {len(bounding_boxes)} objects detected")
-            logger.debug(f"Reasoning: {reasoning}")
+            logger.info(
+                "Claude response processed: %d objects detected",
+                len(bounding_boxes),
+            )
+            logger.debug("Reasoning: %s", reasoning)
 
             return {
                 "answer": answer,
                 "reasoning": reasoning,
                 "bounding_boxes": bounding_boxes,
-                "model": self.model
+                "model": self.model,
             }
 
-        except Exception as e:
-            logger.error(f"Error querying OpenAI: {str(e)}")
+        except Exception as exc:
+            logger.error(f"Error querying Claude: {exc}")
             raise
 
     async def self_correct_with_reasoning(
@@ -168,23 +119,30 @@ class VLMService:
         proof_overlay_base64: str,
         geometry_summary: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Self-correction with explicit reasoning loop using GPT-5-nano."""
+        """Self-correction with explicit reasoning loop using Claude."""
         try:
-            processed_image = resize_image_if_needed(image_base64, max_size_mb=4.7, preserve_quality=True)
-            processed_proof = resize_image_if_needed(proof_overlay_base64, max_size_mb=4.7, preserve_quality=True)
+            processed_image = resize_image_if_needed(
+                image_base64,
+                max_size_mb=4.7,
+                preserve_quality=True,
+            )
+            processed_proof = resize_image_if_needed(
+                proof_overlay_base64,
+                max_size_mb=4.7,
+                preserve_quality=True,
+            )
 
-            image_data_url = self._ensure_data_url(processed_image)
-            proof_data_url = self._ensure_data_url(processed_proof)
-
-            evidence_text = "\n\n".join([
-                (
-                    f"**Contradiction {i + 1}: {c['type'].upper()}**\n"
-                    f"- Your claim: {c['claim']}\n"
-                    f"- Geometric evidence: {c['evidence']}\n"
-                    f"- Severity: {c['severity']:.1%}"
-                )
-                for i, c in enumerate(contradictions)
-            ]) or "No contradictions provided."
+            evidence_text = "\n\n".join(
+                [
+                    (
+                        f"**Contradiction {i + 1}: {c['type'].upper()}**\n"
+                        f"- Your claim: {c['claim']}\n"
+                        f"- Geometric evidence: {c['evidence']}\n"
+                        f"- Severity: {c['severity']:.1%}"
+                    )
+                    for i, c in enumerate(contradictions)
+                ]
+            ) or "No contradictions provided."
 
             geometry_section = ""
             if geometry_summary:
@@ -225,46 +183,65 @@ Respond with this format:
 [number between 0 and 1]
 """
 
-            response = self.client.chat.completions.create(
+            response = self.client.messages.create(
                 model=self.model,
-               # temperature=max(self.temperature, 0.2),
-               # max_completion_tokens=self.max_output_tokens, # to run with gpt nano max comletion tokens param changed from max_tokens
+                temperature=max(self.temperature, 0.2),
+                max_tokens=self.max_output_tokens,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a meticulous assistant that double-checks spatial claims against evidence."
-                    },
                     {
                         "role": "user",
                         "content": [
                             {"type": "text", "text": prompt},
-                            {"type": "image_url", "image_url": {"url": image_data_url}},
-                            {"type": "image_url", "image_url": {"url": proof_data_url}}
-                        ]
+                            self._build_claude_image_content(processed_image),
+                            self._build_claude_image_content(processed_proof),
+                        ],
                     }
-                ]
+                ],
             )
 
-            full_response = response.choices[0].message.content or ""
-            logger.info(f"Self-correction response received ({len(full_response)} chars)")
-            logger.debug(f"Full response sample: {full_response[:500]}")
+            full_response = self._extract_text_from_response(response)
+            logger.info(
+                "Self-correction response received (%d chars)",
+                len(full_response),
+            )
+            logger.debug("Full response sample: %s", full_response[:500])
 
             revised_answer = full_response
             self_reflection = ""
             confidence = 0.7
 
-            import re
-
-            reflection_match = re.search(r"\*\*Self-Reflection:\*\*\s*(.+?)(?=\*\*Revised Answer:\*\*|\*\*Confidence:\*\*|$)", full_response, re.DOTALL)
-            answer_match = re.search(r"\*\*Revised Answer:\*\*\s*(.+?)(?=\*\*Confidence:\*\*|$)", full_response, re.DOTALL)
-            confidence_match = re.search(r"\*\*Confidence:\*\*\s*([0-9.]+)", full_response)
+            reflection_match = re.search(
+                r"\*\*Self-Reflection:\*\*\s*(.+?)(?=\*\*Revised Answer:\*\*|\*\*Confidence:\*\*|$)",
+                full_response,
+                re.DOTALL,
+            )
+            answer_match = re.search(
+                r"\*\*Revised Answer:\*\*\s*(.+?)(?=\*\*Confidence:\*\*|$)",
+                full_response,
+                re.DOTALL,
+            )
+            confidence_match = re.search(
+                r"\*\*Confidence:\*\*\s*([0-9.]+)",
+                full_response,
+            )
 
             if not reflection_match:
-                reflection_match = re.search(r"Self-Reflection:\s*(.+?)(?=Revised Answer:|Confidence:|$)", full_response, re.DOTALL)
+                reflection_match = re.search(
+                    r"Self-Reflection:\s*(.+?)(?=Revised Answer:|Confidence:|$)",
+                    full_response,
+                    re.DOTALL,
+                )
             if not answer_match:
-                answer_match = re.search(r"Revised Answer:\s*(.+?)(?=Confidence:|$)", full_response, re.DOTALL)
+                answer_match = re.search(
+                    r"Revised Answer:\s*(.+?)(?=Confidence:|$)",
+                    full_response,
+                    re.DOTALL,
+                )
             if not confidence_match:
-                confidence_match = re.search(r"Confidence:\s*([0-9.]+)", full_response)
+                confidence_match = re.search(
+                    r"Confidence:\s*([0-9.]+)",
+                    full_response,
+                )
 
             if reflection_match:
                 self_reflection = reflection_match.group(1).strip()
@@ -281,16 +258,72 @@ Respond with this format:
                 "revised_answer": revised_answer,
                 "self_reflection": self_reflection,
                 "confidence": min(max(confidence, 0.0), 1.0),
-                "full_reasoning": full_response
+                "full_reasoning": full_response,
             }
 
-        except Exception as e:
-            logger.error(f"Error during self-correction: {str(e)}")
+        except Exception as exc:
+            logger.error(f"Error during self-correction: {exc}")
             raise
 
     @staticmethod
-    def _ensure_data_url(image_base64: str) -> str:
-        """Ensure the image string has a proper data URL prefix."""
-        if image_base64.startswith("data:image"):
-            return image_base64
-        return f"data:image/jpeg;base64,{image_base64}"
+    def _build_claude_image_content(image_base64: str) -> Dict[str, Any]:
+        media_type, data = VLMService._split_data_url(image_base64)
+        return {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": data,
+            },
+        }
+
+    @staticmethod
+    def _split_data_url(image_base64: str) -> Tuple[str, str]:
+        if image_base64.startswith("data:image") and "," in image_base64:
+            header, data = image_base64.split(",", 1)
+            media_type = header.split(";")[0].split(":", 1)[1]
+            return media_type, data
+        return "image/jpeg", image_base64
+
+    @staticmethod
+    def _extract_text_from_response(response: Any) -> str:
+        blocks = getattr(response, "content", []) or []
+        texts: List[str] = []
+        for block in blocks:
+            block_type = getattr(block, "type", None)
+            if block_type is None and isinstance(block, dict):
+                block_type = block.get("type")
+            if block_type == "text":
+                text_value = getattr(block, "text", None)
+                if text_value is None and isinstance(block, dict):
+                    text_value = block.get("text")
+                if text_value:
+                    texts.append(text_value)
+        return "\n".join(texts).strip()
+
+    @staticmethod
+    def _strip_code_fences(text: str) -> str:
+        stripped = text.strip()
+        if stripped.startswith("```"):
+            stripped = re.sub(r"^```[a-zA-Z0-9_+-]*", "", stripped).strip()
+            if stripped.endswith("```"):
+                stripped = stripped[:-3].strip()
+        return stripped
+
+    def _parse_structured_response(self, text: str) -> Dict[str, Any]:
+        cleaned = self._strip_code_fences(text)
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+            if match:
+                try:
+                    return json.loads(match.group(0))
+                except json.JSONDecodeError:
+                    pass
+            logger.warning("Falling back to default payload parsing")
+            return {
+                "answer": cleaned.strip(),
+                "reasoning": "",
+                "objects": [],
+            }

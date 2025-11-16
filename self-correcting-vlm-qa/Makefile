@@ -1,7 +1,7 @@
 .PHONY: help install dev test run-api run-demo run clean
 
 help:
-	@echo "Self-Correcting VLM QA with GPT-5 Nano - Available Commands"
+	@echo "Self-Correcting VLM QA with Claude 3.5 Sonnet - Available Commands"
 	@echo "======================================================="
 	@echo "install   - Install dependencies"
 	@echo "dev       - Install development dependencies"

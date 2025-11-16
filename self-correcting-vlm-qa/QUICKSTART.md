@@ -1,6 +1,6 @@
 # Quick Start Guide - Simple Demo
 
-Get started with **OpenAI GPT-5-nano powered self-correcting spatial reasoning** in minutes!
+Get started with **Anthropic Claude 3.5 Sonnet powered self-correcting spatial reasoning** in minutes!
 
 ## 1. Install Dependencies
 
@@ -22,9 +22,9 @@ Create a `.env` file in the `config` folder:
 cp config/.env.example config/.env
 ```
 
-Edit `config/.env` and add your OpenAI API key:
+Edit `config/.env` and add your Anthropic API key:
 ```env
-OPENAI_API_KEY=your_openai_api_key_here
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
 ```
 
 ## 3. Run the Demo
@@ -58,16 +58,16 @@ python example_usage.py
    - "Which object is closer to the camera?"
    - "How many cars are in the image?"
    - "Is the person taller than the building?"
-3. Watch GPT-5 Nano analyze, verify, and self-correct!
+3. Watch Claude 3.5 Sonnet analyze, verify, and self-correct!
 
 ## That's it!
 
 The system will:
-1. **Ask**: GPT-5 Nano generates the initial answer with reasoning
+1. **Ask**: Claude 3.5 Sonnet generates the initial answer with reasoning
 2. **Verify**: Depth maps check the model's spatial claims
-3. **Self-Correct**: GPT-5 Nano explicitly reflects on errors and corrects them
-4. **Show**: See GPT-5 Nano's self-reflection and proof overlays
+3. **Self-Correct**: Claude 3.5 Sonnet explicitly reflects on errors and corrects them
+4. **Show**: See Claude 3.5 Sonnet's self-reflection and proof overlays
 
-✨ **Key Feature**: GPT-5 Nano uses an explicit self-reasoning loop to acknowledge mistakes and correct them honestly!
+✨ **Key Feature**: Claude 3.5 Sonnet uses an explicit self-reasoning loop to acknowledge mistakes and correct them honestly!
 
 No complicated setup needed!
