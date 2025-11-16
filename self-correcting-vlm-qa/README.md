@@ -157,7 +157,7 @@ Edit `config/.env` to customize:
 OPENAI_API_KEY=your_openai_api_key_here
 
 # OpenAI Configuration
-OPENAI_VLM_MODEL=gpt-5-nano
+OPENAI_VLM_MODEL=gpt-4o
 OPENAI_TEMPERATURE=0.2
 OPENAI_MAX_OUTPUT_TOKENS=2048
 

@@ -22,7 +22,7 @@ class VLMService:
             raise ValueError("OPENAI_API_KEY not found in environment variables")
 
         self.client = OpenAI(api_key=api_key)
-        self.model = os.getenv("OPENAI_VLM_MODEL", "gpt-5-nano")
+        self.model = os.getenv("OPENAI_VLM_MODEL", "gpt-4o")
         self.temperature = float(os.getenv("OPENAI_TEMPERATURE", "0.1"))
         self.max_output_tokens = int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "2048"))
 
