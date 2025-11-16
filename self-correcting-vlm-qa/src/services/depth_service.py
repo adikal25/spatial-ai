@@ -224,6 +224,15 @@ class DepthService:
             logger.warning("Degenerate bounding box after clamping; skipping depth extraction")
             return 0.0, 0.0
 
+        # Optionally tighten the region to avoid background bleed (shrink 10% on each side)
+        shrink_ratio = 0.1
+        shrink_x = int((x2_px - x1_px) * shrink_ratio)
+        shrink_y = int((y2_px - y1_px) * shrink_ratio)
+        x1_px = min(max(x1_px + shrink_x, 0), w - 1)
+        x2_px = min(max(x2_px - shrink_x, x1_px + 1), w)
+        y1_px = min(max(y1_px + shrink_y, 0), h - 1)
+        y2_px = min(max(y2_px - shrink_y, y1_px + 1), h)
+
         # Extract region
         region = depth_map[y1_px:y2_px, x1_px:x2_px]
 
@@ -300,10 +309,9 @@ class DepthService:
         """
         Determine whether to invert the normalized depth map.
 
-        Many legacy models (MiDaS/ZoeDepth) emit inverse depth (larger = closer),
-        while Depth Anything emits true depth (larger = further). Allow override
-        via DEPTH_ORIENTATION env var with values:
-          - "auto" (default): invert for MiDaS/Zoe, keep raw for Depth Anything
+        Many monocular models emit inverse depth (larger = closer), while a few newer
+        models emit true depth (larger = farther). Allow override via DEPTH_ORIENTATION:
+          - "auto" (default): infer from model name
           - "invert": always invert
           - "raw": never invert
         """
@@ -316,6 +324,8 @@ class DepthService:
         # Auto-detect based on model name
         model_lower = self.model_name.lower()
         if "depth_anything" in model_lower:
+            return True
+        if any(keyword in model_lower for keyword in ("metric3d", "leres", "true_depth")):
             return False
         # Assume MiDaS/Zoe output inverse depth by default
         return True

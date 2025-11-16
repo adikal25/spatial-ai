@@ -2,16 +2,23 @@
 Geometric verification service that detects contradictions in VLM responses.
 Uses depth estimation and geometric analysis.
 """
+import os
 import base64
 import numpy as np
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from io import BytesIO
 
 import cv2
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 from loguru import logger
 
-from src.models.schemas import BoundingBox, SpatialMetrics, Contradiction
+from src.models.schemas import (
+    BoundingBox,
+    SpatialMetrics,
+    Contradiction,
+    ComparisonClaim,
+    CountClaim,
+)
 
 
 class VerificationResult:
@@ -35,13 +42,16 @@ class VerifierService:
         """Initialize verifier with depth service."""
         self.depth_service = depth_service
 
-        # Thresholds for contradiction detection
-        self.relative_size_threshold = 0.3  # 30% difference
-        self.relative_distance_threshold = 0.3  # Increased to 30% for more confidence
+        # Thresholds for contradiction detection (configurable via environment)
+        self.relative_size_threshold = float(os.getenv("RELATIVE_SIZE_THRESHOLD", "0.3"))
+        self.relative_distance_threshold = float(os.getenv("RELATIVE_DISTANCE_THRESHOLD", "0.3"))
 
         # Depth reliability settings
-        self.depth_confidence_threshold = 0.4  # Require 40% depth difference for high confidence
+        self.depth_confidence_threshold = float(os.getenv("DEPTH_CONFIDENCE_THRESHOLD", "0.4"))
         self.require_multiple_signals = True  # Require multiple cues to agree
+
+        logger.info(f"Verifier initialized with thresholds - size: {self.relative_size_threshold}, "
+                   f"distance: {self.relative_distance_threshold}, depth_confidence: {self.depth_confidence_threshold}")
 
     async def verify(
         self,
@@ -70,11 +80,16 @@ class VerifierService:
                 vlm_response.get("bounding_boxes", [])
             )
 
+            # Build structured claims from the VLM output
+            structured_claims = vlm_response.get("structured_claims", {}) or {}
+            comparison_claims = self._build_comparison_claims(structured_claims.get("comparisons"))
+            count_claims = self._build_count_claims(structured_claims.get("counts"))
+
             # Detect contradictions
             contradictions = self._detect_contradictions(
-                vlm_response["answer"],
-                spatial_metrics,
-                question
+                spatial_metrics=spatial_metrics,
+                comparisons=comparison_claims,
+                count_claims=count_claims
             )
 
             # Create proof overlay
@@ -129,8 +144,10 @@ class VerifierService:
             width = bbox.x2 - bbox.x1
             height = bbox.y2 - bbox.y1
 
+            object_id = bbox.object_id or f"obj_{i}_{bbox.label or 'unknown'}"
+
             metric = SpatialMetrics(
-                object_id=f"obj_{i}_{bbox.label or 'unknown'}",
+                object_id=object_id,
                 depth_mean=mean_depth,
                 depth_std=std_depth,
                 estimated_distance=self._depth_to_distance(mean_depth),
@@ -138,28 +155,75 @@ class VerifierService:
                 bounding_box=bbox
             )
 
+            # Ensure downstream lookups can rely on bounding_box.object_id
+            if not bbox.object_id:
+                bbox.object_id = object_id
+
             metrics.append(metric)
 
         return metrics
 
-    def _check_occlusion(self, bbox1: BoundingBox, bbox2: BoundingBox) -> str:
+    @staticmethod
+    def _build_comparison_claims(raw_claims: Optional[List[Dict[str, Any]]]) -> List[ComparisonClaim]:
+        """Validate and convert raw comparison claims to pydantic models."""
+        claims: List[ComparisonClaim] = []
+        if not raw_claims:
+            return claims
+
+        for claim in raw_claims:
+            try:
+                claims.append(ComparisonClaim(**claim))
+            except Exception as err:
+                logger.warning(f"Skipping malformed comparison claim from VLM: {err}")
+
+        return claims
+
+    @staticmethod
+    def _build_count_claims(raw_counts: Optional[List[Dict[str, Any]]]) -> List[CountClaim]:
+        """Validate and convert raw count claims to pydantic models."""
+        claims: List[CountClaim] = []
+        if not raw_counts:
+            return claims
+
+        for claim in raw_counts:
+            try:
+                claims.append(CountClaim(**claim))
+            except Exception as err:
+                logger.warning(f"Skipping malformed count claim from VLM: {err}")
+
+        return claims
+
+    def _check_occlusion(
+        self,
+        bbox1: BoundingBox,
+        bbox2: BoundingBox,
+        depth1: Optional[float] = None,
+        depth2: Optional[float] = None
+    ) -> str:
         """
-        Check if one bounding box occludes another.
+        Check if one bounding box occludes another using geometric overlap and depth cues.
 
         Args:
             bbox1: First bounding box
             bbox2: Second bounding box
+            depth1: Mean depth of bbox1 (lower = closer)
+            depth2: Mean depth of bbox2 (lower = closer)
 
         Returns:
             "bbox1_occludes_bbox2", "bbox2_occludes_bbox1", or "no_occlusion"
         """
+        label1 = bbox1.label or "obj1"
+        label2 = bbox2.label or "obj2"
+
         # Calculate intersection
         x_left = max(bbox1.x1, bbox2.x1)
         y_top = max(bbox1.y1, bbox2.y1)
         x_right = min(bbox1.x2, bbox2.x2)
         y_bottom = min(bbox1.y2, bbox2.y2)
 
+        # No overlap at all
         if x_right <= x_left or y_bottom <= y_top:
+            logger.debug(f"Occlusion check [{label1} vs {label2}]: No overlap detected")
             return "no_occlusion"
 
         # Calculate intersection area
@@ -169,19 +233,72 @@ class VerifierService:
         area1 = (bbox1.x2 - bbox1.x1) * (bbox1.y2 - bbox1.y1)
         area2 = (bbox2.x2 - bbox2.x1) * (bbox2.y2 - bbox2.y1)
 
-        # If intersection is significant (>30% of smaller box), check which occludes
+        # Calculate overlap ratios from both perspectives
         overlap_ratio1 = intersection_area / area1 if area1 > 0 else 0
         overlap_ratio2 = intersection_area / area2 if area2 > 0 else 0
 
-        # Significant overlap threshold
-        if max(overlap_ratio1, overlap_ratio2) > 0.3:
-            # The larger box is likely behind the smaller one if they overlap significantly
-            # Or if one contains the other
-            if area1 > area2 * 1.5:
-                return "bbox2_occludes_bbox1"  # Smaller box likely in front
-            elif area2 > area1 * 1.5:
-                return "bbox1_occludes_bbox2"
+        # Need significant overlap to consider occlusion (>15% threshold)
+        overlap_threshold = 0.15
+        if max(overlap_ratio1, overlap_ratio2) < overlap_threshold:
+            logger.debug(f"Occlusion check [{label1} vs {label2}]: Overlap too small "
+                        f"({overlap_ratio1:.1%}/{overlap_ratio2:.1%} < {overlap_threshold:.1%})")
+            return "no_occlusion"
 
+        logger.debug(f"Occlusion check [{label1} vs {label2}]: Overlap detected - "
+                    f"{label1} covered {overlap_ratio1:.1%}, {label2} covered {overlap_ratio2:.1%}")
+
+        # Strategy 1: Use depth information if available (most reliable)
+        if depth1 is not None and depth2 is not None:
+            depth_diff = abs(depth1 - depth2)
+            avg_depth = (depth1 + depth2) / 2
+
+            # If depth difference is significant (>20% relative difference)
+            if avg_depth > 0 and (depth_diff / avg_depth) > 0.2:
+                # Object with lower depth value is closer (in front)
+                if depth1 < depth2:
+                    logger.info(f"✓ Occlusion [Strategy: Depth-Aware]: {label1} occludes {label2} "
+                               f"(depth: {depth1:.1f} < {depth2:.1f}, diff: {depth_diff/avg_depth:.1%})")
+                    return "bbox1_occludes_bbox2"
+                else:
+                    logger.info(f"✓ Occlusion [Strategy: Depth-Aware]: {label2} occludes {label1} "
+                               f"(depth: {depth2:.1f} < {depth1:.1f}, diff: {depth_diff/avg_depth:.1%})")
+                    return "bbox2_occludes_bbox1"
+            else:
+                logger.debug(f"Occlusion check [{label1} vs {label2}]: Depth difference too small "
+                            f"({depth_diff/avg_depth:.1%} < 20%), trying geometric strategies")
+
+        # Strategy 2: Geometric heuristics when depth is inconclusive
+
+        # Check for containment - if one box mostly contains the other
+        if overlap_ratio2 > 0.8:  # bbox2 is mostly inside bbox1
+            # The contained box is likely in front
+            logger.info(f"✓ Occlusion [Strategy: Containment]: {label2} occludes {label1} "
+                       f"({label2} {overlap_ratio2:.1%} contained in {label1})")
+            return "bbox2_occludes_bbox1"
+        elif overlap_ratio1 > 0.8:  # bbox1 is mostly inside bbox2
+            logger.info(f"✓ Occlusion [Strategy: Containment]: {label1} occludes {label2} "
+                       f"({label1} {overlap_ratio1:.1%} contained in {label2})")
+            return "bbox1_occludes_bbox2"
+
+        # Check size heuristic - when similarly sized objects overlap,
+        # the one that's smaller in screen space is often further away
+        # (size constancy principle)
+        size_ratio = area1 / area2 if area2 > 0 else 1.0
+
+        if size_ratio > 2.0:
+            # bbox1 is much larger - likely behind
+            logger.info(f"✓ Occlusion [Strategy: Size Heuristic]: {label2} occludes {label1} "
+                       f"({label1} is {size_ratio:.1f}x larger, likely behind)")
+            return "bbox2_occludes_bbox1"
+        elif size_ratio < 0.5:
+            # bbox2 is much larger - likely behind
+            logger.info(f"✓ Occlusion [Strategy: Size Heuristic]: {label1} occludes {label2} "
+                       f"({label2} is {1/size_ratio:.1f}x larger, likely behind)")
+            return "bbox1_occludes_bbox2"
+
+        # Overlap exists but can't determine occlusion order confidently
+        logger.debug(f"Occlusion check [{label1} vs {label2}]: Overlap exists but cannot determine order "
+                    f"(size_ratio: {size_ratio:.2f}, depth_available: {depth1 is not None})")
         return "no_occlusion"
 
     def _get_vertical_position_cue(self, bbox1: BoundingBox, bbox2: BoundingBox) -> str:
@@ -209,418 +326,281 @@ class VerifierService:
         else:
             return "similar_height"
 
+
+
     def _detect_contradictions(
         self,
-        answer: str,
         spatial_metrics: List[SpatialMetrics],
-        question: str
+        comparisons: List[ComparisonClaim],
+        count_claims: List[CountClaim]
     ) -> List[Contradiction]:
-        """
-        Detect contradictions between VLM answer and geometric measurements.
+        """Detect contradictions between structured VLM claims and geometric measurements."""
+        contradictions: List[Contradiction] = []
 
-        Args:
-            answer: VLM's answer
-            spatial_metrics: Computed spatial metrics
-            question: Original question
+        if not spatial_metrics:
+            return contradictions
 
-        Returns:
-            List of detected contradictions
-        """
-        contradictions = []
-
-        # Check relative distances
-        if len(spatial_metrics) >= 2:
-            contradictions.extend(
-                self._check_relative_distances(answer, spatial_metrics)
-            )
-
-        # Check relative sizes
-        if len(spatial_metrics) >= 2:
-            contradictions.extend(
-                self._check_relative_sizes(answer, spatial_metrics)
-            )
-
-        # Check object counts
-        count_contradictions = self._check_object_counts(answer, spatial_metrics, question)
-        contradictions.extend(count_contradictions)
-
-        return contradictions
-
-    def _check_relative_distances(
-        self,
-        answer: str,
-        metrics: List[SpatialMetrics]
-    ) -> List[Contradiction]:
-        """Check if claimed relative distances match depth measurements using multiple cues."""
-        contradictions = []
-
-        answer_lower = answer.lower()
-
-        for i in range(len(metrics)):
-            for j in range(i + 1, len(metrics)):
-                obj1 = metrics[i]
-                obj2 = metrics[j]
-
-                # Extract object labels for matching
-                label1 = (obj1.bounding_box.label or f"object{i}").lower()
-                label2 = (obj2.bounding_box.label or f"object{j}").lower()
-
-                # SIGNAL 1: Depth analysis
-                depth_diff = abs(obj1.depth_mean - obj2.depth_mean)
-                avg_depth = (obj1.depth_mean + obj2.depth_mean) / 2
-
-                if avg_depth > 0:
-                    relative_diff = depth_diff / avg_depth
-
-                    # Determine relationship from depth
-                    closer_by_depth = obj1 if obj1.depth_mean < obj2.depth_mean else obj2
-                    further_by_depth = obj2 if obj1.depth_mean < obj2.depth_mean else obj1
-                    closer_label_depth = label1 if obj1.depth_mean < obj2.depth_mean else label2
-                    further_label_depth = label2 if obj1.depth_mean < obj2.depth_mean else label1
-
-                    # SIGNAL 2: Occlusion
-                    occlusion = self._check_occlusion(obj1.bounding_box, obj2.bounding_box)
-
-                    # SIGNAL 3: Vertical position
-                    vertical_cue = self._get_vertical_position_cue(obj1.bounding_box, obj2.bounding_box)
-
-                    # Count how many signals agree
-                    signals_agreeing = 0
-                    supporting_evidence = []
-
-                    # Check if depth is reliable (high confidence)
-                    depth_is_reliable = relative_diff > self.depth_confidence_threshold
-
-                    if depth_is_reliable:
-                        signals_agreeing += 1
-                        supporting_evidence.append(f"depth ({closer_by_depth.object_id} depth={closer_by_depth.depth_mean:.1f} vs {further_by_depth.object_id} depth={further_by_depth.depth_mean:.1f}, {relative_diff:.1%} difference)")
-
-                    # Check occlusion signal
-                    if occlusion == "bbox1_occludes_bbox2" and closer_by_depth == obj1:
-                        signals_agreeing += 1
-                        supporting_evidence.append(f"occlusion ({label1} occludes {label2})")
-                    elif occlusion == "bbox2_occludes_bbox1" and closer_by_depth == obj2:
-                        signals_agreeing += 1
-                        supporting_evidence.append(f"occlusion ({label2} occludes {label1})")
-
-                    # Check vertical position signal
-                    if vertical_cue == "bbox1_lower" and closer_by_depth == obj1:
-                        signals_agreeing += 1
-                        supporting_evidence.append(f"vertical position ({label1} lower in frame)")
-                    elif vertical_cue == "bbox2_lower" and closer_by_depth == obj2:
-                        signals_agreeing += 1
-                        supporting_evidence.append(f"vertical position ({label2} lower in frame)")
-
-                    # Only flag contradiction if we have strong evidence (multiple signals OR very high depth confidence)
-                    has_strong_evidence = (signals_agreeing >= 2) or (depth_is_reliable and relative_diff > 0.5)
-
-                    if has_strong_evidence and relative_diff > self.relative_distance_threshold:
-                        # Significant depth difference - objects are NOT at same distance
-                        # Use the depth-based determination since we have strong evidence
-                        closer_obj = closer_by_depth
-                        further_obj = further_by_depth
-                        closer_label = closer_label_depth
-                        further_label = further_label_depth
-
-                        # Format multi-signal evidence
-                        evidence_str = f"Multiple visual cues agree: {', '.join(supporting_evidence)}"
-
-                        # Check if answer claims they're at same/similar distance
-                        same_distance_phrases = [
-                            "same distance", "equal distance", "equidistant",
-                            "similar distance", "about the same distance",
-                            "roughly equal distance", "comparable distance"
-                        ]
-
-                        for phrase in same_distance_phrases:
-                            if phrase in answer_lower:
-                                contradictions.append(Contradiction(
-                                    type="distance",
-                                    claim=f"Objects at {phrase}",
-                                    evidence=evidence_str,
-                                    severity=min(0.9, 0.5 + (signals_agreeing * 0.15))
-                                ))
-                                break
-
-                        # Check if answer claims WRONG order (closer/further reversed)
-                        # Pattern: "[label1] is closer/nearer" when label1 should be further
-                        closer_patterns = [
-                            f"{further_label} is closer",
-                            f"{further_label} is nearer",
-                            f"{further_label} appears closer",
-                            f"{further_label} seems closer",
-                            f"the {further_label} is closer",
-                            f"the {further_label} is nearer",
-                        ]
-
-                        for pattern in closer_patterns:
-                            if pattern in answer_lower:
-                                contradictions.append(Contradiction(
-                                    type="distance",
-                                    claim=f"{further_obj.object_id} claimed closer to camera",
-                                    evidence=evidence_str,
-                                    severity=min(0.95, 0.6 + (signals_agreeing * 0.15))
-                                ))
-                                break
-
-                        # Pattern: "[label2] is further/farther" when label2 should be closer
-                        further_patterns = [
-                            f"{closer_label} is further",
-                            f"{closer_label} is farther",
-                            f"{closer_label} is more distant",
-                            f"{closer_label} appears further",
-                            f"the {closer_label} is further",
-                            f"the {closer_label} is farther",
-                        ]
-
-                        for pattern in further_patterns:
-                            if pattern in answer_lower:
-                                contradictions.append(Contradiction(
-                                    type="distance",
-                                    claim=f"{closer_obj.object_id} claimed further from camera",
-                                    evidence=evidence_str,
-                                    severity=min(0.95, 0.6 + (signals_agreeing * 0.15))
-                                ))
-                                break
-
-                    else:
-                        # Depth values are similar - objects ARE at similar distance
-                        # Check if answer incorrectly claims one is significantly closer
-
-                        strong_distance_phrases = [
-                            f"{label1} is much closer",
-                            f"{label1} is significantly closer",
-                            f"{label1} is far closer",
-                            f"{label2} is much closer",
-                            f"{label2} is significantly closer",
-                            f"{label2} is far closer",
-                            f"{label1} is much further",
-                            f"{label1} is much farther",
-                            f"{label2} is much further",
-                            f"{label2} is much farther",
-                        ]
-
-                        for phrase in strong_distance_phrases:
-                            if phrase in answer_lower:
-                                contradictions.append(Contradiction(
-                                    type="distance",
-                                    claim=f"Claims significant distance difference",
-                                    evidence=f"Objects have similar depths: {obj1.object_id}={obj1.depth_mean:.1f}, {obj2.object_id}={obj2.depth_mean:.1f} (only {relative_diff:.1%} difference)",
-                                    severity=0.6
-                                ))
-                                break
-
-        return contradictions
-
-    def _check_relative_sizes(
-        self,
-        answer: str,
-        metrics: List[SpatialMetrics]
-    ) -> List[Contradiction]:
-        """Check if claimed relative sizes match measurements."""
-        contradictions = []
-        answer_lower = answer.lower()
-
-        # Compare object sizes
-        for i in range(len(metrics)):
-            for j in range(i + 1, len(metrics)):
-                obj1 = metrics[i]
-                obj2 = metrics[j]
-
-                # Extract object labels for matching
-                label1 = (obj1.bounding_box.label or f"object{i}").lower()
-                label2 = (obj2.bounding_box.label or f"object{j}").lower()
-
-                size1 = obj1.estimated_size["width"] * obj1.estimated_size["height"]
-                size2 = obj2.estimated_size["width"] * obj2.estimated_size["height"]
-
-                if size1 > 0 and size2 > 0:
-                    size_ratio = max(size1, size2) / min(size1, size2)
-                    larger_obj = obj1 if size1 > size2 else obj2
-                    smaller_obj = obj2 if size1 > size2 else obj1
-                    larger_label = label1 if size1 > size2 else label2
-                    smaller_label = label2 if size1 > size2 else label1
-
-                    if size_ratio > (1 + self.relative_size_threshold):
-                        # Significant size difference exists
-
-                        # Check if answer claims they're similar/same size
-                        similar_size_phrases = [
-                            "same size", "similar size", "equal size",
-                            "about the same size", "roughly the same size",
-                            "comparable size", "similar in size",
-                            "equally sized", "same dimensions"
-                        ]
-
-                        for phrase in similar_size_phrases:
-                            if phrase in answer_lower:
-                                contradictions.append(Contradiction(
-                                    type="size",
-                                    claim=f"Objects claimed to be {phrase}",
-                                    evidence=f"{larger_obj.object_id} is {size_ratio:.1f}x larger in bounding box area than {smaller_obj.object_id}",
-                                    severity=min(0.9, 0.4 + (size_ratio - 1) * 0.2)
-                                ))
-                                break
-
-                        # Check if answer claims WRONG order (larger/smaller reversed)
-                        larger_patterns = [
-                            f"{smaller_label} is larger",
-                            f"{smaller_label} is bigger",
-                            f"{smaller_label} is much larger",
-                            f"{smaller_label} appears larger",
-                            f"the {smaller_label} is larger",
-                            f"the {smaller_label} is bigger",
-                        ]
-
-                        for pattern in larger_patterns:
-                            if pattern in answer_lower:
-                                contradictions.append(Contradiction(
-                                    type="size",
-                                    claim=f"{smaller_obj.object_id} claimed to be larger",
-                                    evidence=f"Bounding box analysis shows {larger_obj.object_id} is actually {size_ratio:.1f}x larger than {smaller_obj.object_id}",
-                                    severity=min(0.95, 0.5 + (size_ratio - 1) * 0.2)
-                                ))
-                                break
-
-                        smaller_patterns = [
-                            f"{larger_label} is smaller",
-                            f"{larger_label} is much smaller",
-                            f"{larger_label} appears smaller",
-                            f"the {larger_label} is smaller",
-                        ]
-
-                        for pattern in smaller_patterns:
-                            if pattern in answer_lower:
-                                contradictions.append(Contradiction(
-                                    type="size",
-                                    claim=f"{larger_obj.object_id} claimed to be smaller",
-                                    evidence=f"Bounding box analysis shows {larger_obj.object_id} is actually {size_ratio:.1f}x larger than {smaller_obj.object_id}",
-                                    severity=min(0.95, 0.5 + (size_ratio - 1) * 0.2)
-                                ))
-                                break
-
-                    else:
-                        # Sizes are similar - check if answer claims significant difference
-                        strong_size_phrases = [
-                            f"{label1} is much larger",
-                            f"{label1} is much bigger",
-                            f"{label1} is significantly larger",
-                            f"{label2} is much larger",
-                            f"{label2} is much bigger",
-                            f"{label2} is significantly larger",
-                            f"{label1} is much smaller",
-                            f"{label2} is much smaller",
-                        ]
-
-                        for phrase in strong_size_phrases:
-                            if phrase in answer_lower:
-                                contradictions.append(Contradiction(
-                                    type="size",
-                                    claim=f"Claims significant size difference",
-                                    evidence=f"Objects have similar bounding box sizes (ratio: {size_ratio:.2f}x)",
-                                    severity=0.6
-                                ))
-                                break
-
-        return contradictions
-
-    def _check_object_counts(
-        self,
-        answer: str,
-        metrics: List[SpatialMetrics],
-        question: str
-    ) -> List[Contradiction]:
-        """Check if counted objects match detected objects."""
-        contradictions = []
-        import re
-
-        # Look for count-related patterns in the question to determine what's being counted
-        question_lower = question.lower()
-        answer_lower = answer.lower()
-
-        # Extract what is being counted from the question
-        count_patterns = [
-            r'how many (\w+)',
-            r'count (?:the )?(\w+)',
-            r'number of (\w+)',
-        ]
-
-        object_type = None
-        for pattern in count_patterns:
-            match = re.search(pattern, question_lower)
-            if match:
-                object_type = match.group(1)
-                break
-
-        # Extract numbers with context from answer
-        # Pattern: "number word objects" or "word number" or "number"
-        number_word_map = {
-            'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
-            'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10,
-            'no': 0, 'single': 1, 'couple': 2, 'pair': 2, 'several': 3,
-            'few': 3, 'multiple': 2, 'many': 5
+        metric_lookup = {
+            metric.bounding_box.object_id or metric.object_id: metric
+            for metric in spatial_metrics
         }
+        label_index = self._build_label_index(spatial_metrics)
 
-        claimed_count = None
+        for claim in comparisons:
+            subject_metric = metric_lookup.get(claim.subject_id)
+            object_metric = metric_lookup.get(claim.object_id)
 
-        # Try to find digit-based counts first
-        digit_matches = re.findall(r'\b(\d+)\s*(\w+)?', answer_lower)
-        for match in digit_matches:
-            number = int(match[0])
-            context = match[1] if len(match) > 1 else ""
-
-            # Skip if it looks like a measurement or year
-            if any(unit in context for unit in ['px', 'cm', 'mm', 'inches', 'feet', 'meter', '%']):
+            if not subject_metric or not object_metric:
+                logger.warning(
+                    "Skipping comparison claim referencing unknown IDs: %s vs %s",
+                    claim.subject_id,
+                    claim.object_id
+                )
                 continue
 
-            # If we know what object type we're counting, check if it matches
-            if object_type and object_type in answer_lower:
-                # Try to find number near the object type
-                pattern = rf'\b(\d+)\s*{object_type}|\b{object_type}\s*(\d+)'
-                specific_match = re.search(pattern, answer_lower)
-                if specific_match:
-                    claimed_count = int(specific_match.group(1) or specific_match.group(2))
-                    break
+            if claim.attribute == "distance":
+                contradiction = self._evaluate_distance_claim(claim, subject_metric, object_metric)
+            else:
+                contradiction = self._evaluate_size_claim(claim, subject_metric, object_metric)
 
-            # Otherwise use first number that seems like a count
-            if claimed_count is None:
-                claimed_count = number
+            if contradiction:
+                contradictions.append(contradiction)
 
-        # Try word-based counts if no digits found
-        if claimed_count is None:
-            for word, value in number_word_map.items():
-                # Look for patterns like "three cars", "no objects", "a single item"
-                pattern = rf'\b{word}\b'
-                if re.search(pattern, answer_lower):
-                    claimed_count = value
-                    break
+        contradictions.extend(self._evaluate_count_claims(count_claims, label_index, metric_lookup))
 
-        # Compare claimed count with detected count
-        if claimed_count is not None and metrics:
-            detected_count = len(metrics)
+        return contradictions
 
-            # Allow tolerance of 1 for edge detection issues
-            if abs(claimed_count - detected_count) > 1:
-                # Calculate severity based on discrepancy
-                discrepancy = abs(claimed_count - detected_count)
-                severity = min(0.95, 0.6 + (discrepancy * 0.1))
+    @staticmethod
+    def _build_label_index(spatial_metrics: List[SpatialMetrics]) -> Dict[str, List[SpatialMetrics]]:
+        """Map normalized labels to their corresponding metrics."""
+        label_index: Dict[str, List[SpatialMetrics]] = {}
+        for metric in spatial_metrics:
+            label = (metric.bounding_box.label or '').strip().lower()
+            if not label:
+                continue
+            label_index.setdefault(label, []).append(metric)
+        return label_index
 
+    def _evaluate_distance_claim(
+        self,
+        claim: ComparisonClaim,
+        subject_metric: SpatialMetrics,
+        object_metric: SpatialMetrics
+    ) -> Optional[Contradiction]:
+        """Validate a distance relationship claim using multi-signal evidence."""
+        evidence = self._gather_distance_evidence(subject_metric, object_metric)
+        relation = claim.relation
+
+        if relation == "similar":
+            if evidence["relative_diff"] > self.relative_distance_threshold:
+                return Contradiction(
+                    type="distance",
+                    claim=f"{claim.subject_id} and {claim.object_id} claimed similar distance",
+                    evidence=evidence["description"],
+                    severity=min(0.9, 0.5 + (evidence["signals"] * 0.15))
+                )
+            return None
+
+        if evidence["relative_diff"] < (self.relative_distance_threshold / 2):
+            return Contradiction(
+                type="distance",
+                claim=f"{claim.subject_id} claimed {relation} than {claim.object_id}",
+                evidence=(
+                    f"Depth difference is minimal ({evidence['relative_diff']:.1%}); "
+                    "objects measure at nearly the same distance."
+                ),
+                severity=0.55
+            )
+
+        if not evidence["has_strong_support"]:
+            logger.debug(
+                "Insufficient agreement between signals for distance claim %s vs %s",
+                claim.subject_id,
+                claim.object_id
+            )
+            return None
+
+        expected_closer = subject_metric if relation == "closer" else object_metric
+        actual_closer = evidence["closer"]
+
+        if expected_closer.object_id != actual_closer.object_id:
+            severity = min(0.95, 0.6 + (evidence["signals"] * 0.15))
+            return Contradiction(
+                type="distance",
+                claim=f"{claim.subject_id} claimed {relation} than {claim.object_id}",
+                evidence=evidence["description"],
+                severity=severity
+            )
+
+        return None
+
+    def _evaluate_size_claim(
+        self,
+        claim: ComparisonClaim,
+        subject_metric: SpatialMetrics,
+        object_metric: SpatialMetrics
+    ) -> Optional[Contradiction]:
+        """Validate size relationship claims using bounding-box areas."""
+        size1 = subject_metric.estimated_size["width"] * subject_metric.estimated_size["height"]
+        size2 = object_metric.estimated_size["width"] * object_metric.estimated_size["height"]
+
+        if size1 <= 0 or size2 <= 0:
+            return None
+
+        if size1 >= size2:
+            larger_metric, smaller_metric = subject_metric, object_metric
+            ratio = size1 / size2 if size2 > 0 else float("inf")
+        else:
+            larger_metric, smaller_metric = object_metric, subject_metric
+            ratio = size2 / size1 if size1 > 0 else float("inf")
+
+        relation = claim.relation
+        significant_difference = ratio > (1 + self.relative_size_threshold)
+
+        if relation in {"same_size", "similar"}:
+            if significant_difference:
+                return Contradiction(
+                    type="size",
+                    claim=f"{claim.subject_id} and {claim.object_id} claimed similar size",
+                    evidence=f"{larger_metric.object_id} is {ratio:.1f}× larger than {smaller_metric.object_id}",
+                    severity=min(0.9, 0.4 + (ratio - 1.0) * 0.2)
+                )
+            return None
+
+        if not significant_difference:
+            return Contradiction(
+                type="size",
+                claim=f"{claim.subject_id} claimed {relation} than {claim.object_id}",
+                evidence="Bounding boxes are nearly equal in area; no measurable dominance.",
+                severity=0.55
+            )
+
+        expected_larger = subject_metric if relation == "larger" else object_metric
+        actual_larger = larger_metric
+
+        if expected_larger.object_id != actual_larger.object_id:
+            severity = min(0.95, 0.5 + (ratio - 1.0) * 0.2)
+            return Contradiction(
+                type="size",
+                claim=f"{claim.subject_id} claimed {relation} than {claim.object_id}",
+                evidence=f"Bounding box analysis shows {actual_larger.object_id} is {ratio:.1f}× larger.",
+                severity=severity
+            )
+
+        return None
+
+    def _evaluate_count_claims(
+        self,
+        count_claims: List[CountClaim],
+        label_index: Dict[str, List[SpatialMetrics]],
+        metric_lookup: Dict[str, SpatialMetrics]
+    ) -> List[Contradiction]:
+        contradictions: List[Contradiction] = []
+
+        for claim in count_claims:
+            if claim.object_ids:
+                detected = [metric_lookup.get(obj_id) for obj_id in claim.object_ids]
+                detected_count = len([m for m in detected if m is not None])
+                tolerance = 0
+            else:
+                detected_objects = label_index.get(claim.object_type.lower(), [])
+                detected_count = len(detected_objects)
+                tolerance = 1
+
+            difference = abs(claim.count - detected_count)
+
+            if difference > tolerance:
+                severity = min(0.95, 0.6 + difference * 0.1)
                 contradictions.append(Contradiction(
                     type="count",
-                    claim=f"Answer claims {claimed_count} {object_type or 'objects'}",
-                    evidence=f"Detected {detected_count} distinct objects with bounding boxes",
+                    claim=f"Answer claims {claim.count} {claim.object_type}",
+                    evidence=f"Detected {detected_count} matching objects (tolerance {tolerance}).",
                     severity=severity
-                ))
-            elif claimed_count == 0 and detected_count > 0:
-                # Special case: claimed none but found some
-                contradictions.append(Contradiction(
-                    type="count",
-                    claim=f"Answer claims no {object_type or 'objects'} present",
-                    evidence=f"Detected {detected_count} objects in the image",
-                    severity=0.9
                 ))
 
         return contradictions
+
+    def _gather_distance_evidence(
+        self,
+        metric_a: SpatialMetrics,
+        metric_b: SpatialMetrics
+    ) -> Dict[str, Any]:
+        """Aggregate signals that describe which object is closer."""
+        depth_diff = abs(metric_a.depth_mean - metric_b.depth_mean)
+        avg_depth = (metric_a.depth_mean + metric_b.depth_mean) / 2 or 1e-6
+        relative_diff = depth_diff / avg_depth
+
+        depth_closer = metric_a if metric_a.depth_mean < metric_b.depth_mean else metric_b
+        depth_further = metric_b if depth_closer == metric_a else metric_a
+
+        closer = depth_closer
+        further = depth_further
+
+        signals_agreeing = 0
+        supporting_evidence: List[str] = []
+        occlusion_support = False
+        vertical_support = False
+
+        depth_is_reliable = relative_diff > self.depth_confidence_threshold
+        if depth_is_reliable:
+            signals_agreeing += 1
+            supporting_evidence.append(
+                f"depth ({depth_closer.object_id}={depth_closer.depth_mean:.2f} vs {depth_further.object_id}={depth_further.depth_mean:.2f})"
+            )
+
+        occlusion = self._check_occlusion(
+            metric_a.bounding_box,
+            metric_b.bounding_box,
+            depth1=metric_a.depth_mean,
+            depth2=metric_b.depth_mean
+        )
+        occlusion_front = None
+        occlusion_back = None
+        if occlusion == "bbox1_occludes_bbox2":
+            occlusion_front, occlusion_back = metric_a, metric_b
+        elif occlusion == "bbox2_occludes_bbox1":
+            occlusion_front, occlusion_back = metric_b, metric_a
+
+        if occlusion_front is not None:
+            occlusion_support = True
+            supporting_evidence.append(
+                f"occlusion ({occlusion_front.bounding_box.label} in front of {occlusion_back.bounding_box.label})"
+            )
+            signals_agreeing += 1
+
+            # If depth is unreliable or disagrees, let occlusion decide ordering
+            if closer.object_id != occlusion_front.object_id and (
+                not depth_is_reliable or relative_diff < self.relative_distance_threshold
+            ):
+                closer = occlusion_front
+                further = occlusion_back
+
+        vertical_cue = self._get_vertical_position_cue(metric_a.bounding_box, metric_b.bounding_box)
+        if vertical_cue == "bbox1_lower" and closer == metric_a:
+            signals_agreeing += 1
+            vertical_support = True
+            supporting_evidence.append(f"vertical cue ({metric_a.bounding_box.label} lower in frame)")
+        elif vertical_cue == "bbox2_lower" and closer == metric_b:
+            signals_agreeing += 1
+            vertical_support = True
+            supporting_evidence.append(f"vertical cue ({metric_b.bounding_box.label} lower in frame)")
+
+        has_strong_support = (
+            signals_agreeing >= 2
+            or (depth_is_reliable and relative_diff > 0.5)
+            or occlusion_support
+            or (vertical_support and depth_is_reliable)
+        )
+        description = "Multiple cues agree: " + ", ".join(supporting_evidence) if supporting_evidence else "Depth cues are weak"
+
+        return {
+            "closer": closer,
+            "further": further,
+            "relative_diff": relative_diff,
+            "signals": signals_agreeing,
+            "has_strong_support": has_strong_support,
+            "description": description
+        }
 
     def _create_proof_overlay(
         self,
@@ -648,8 +628,9 @@ class VerifierService:
         image_bytes = base64.b64decode(image_base64)
         img = Image.open(BytesIO(image_bytes))
 
-        # Create depth visualization
-        depth_normalized = cv2.normalize(depth_map, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        # Create depth visualization (warmer colors = closer objects)
+        depth_viz = np.clip(1.0 - depth_map, 0.0, 1.0)
+        depth_normalized = (depth_viz * 255).astype(np.uint8)
         depth_colored = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_MAGMA)
         depth_img = Image.fromarray(cv2.cvtColor(depth_colored, cv2.COLOR_BGR2RGB))
 
@@ -691,13 +672,19 @@ class VerifierService:
     @staticmethod
     def _depth_to_distance(depth_value: float) -> float:
         """
-        Convert depth map value to estimated distance (rough approximation).
+        Convert depth map value to relative distance metric.
+
+        Note: This returns a RELATIVE distance metric, not absolute distance in meters.
+        Monocular depth estimation provides relative depth only. Without camera calibration
+        and known object sizes, we cannot compute absolute distances.
+
+        The returned value is useful for comparing relative distances between objects,
+        but should not be interpreted as actual meters/feet.
 
         Args:
-            depth_value: Depth value from model
+            depth_value: Normalized depth value (0 = closer, 1 = further)
 
         Returns:
-            Estimated distance in arbitrary units
+            Relative distance metric (0-100) for readability
         """
-        # This is a rough approximation - would need calibration for real distances
-        return depth_value / 10.0
+        return depth_value * 100.0

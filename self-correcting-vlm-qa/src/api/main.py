@@ -16,12 +16,14 @@ from src.models.schemas import QuestionRequest, QuestionResponse, HealthResponse
 from src.services.vlm_service import VLMService
 from src.services.depth_service import DepthService
 from src.services.verifier_service import VerifierService
-from src.services.correction_service import CorrectionService
 
 # Load environment variables from .env (root directory)
 env_path = Path(__file__).parent.parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
+# Validate required environment variables
+if not os.getenv("ANTHROPIC_API_KEY"):
+    raise ValueError("ANTHROPIC_API_KEY not found in environment variables. Please set it in .env file.")
 
 # Global service instances
 services: Dict[str, Any] = {}
@@ -36,7 +38,6 @@ async def lifespan(app: FastAPI):
     services["vlm"] = VLMService()
     services["depth"] = DepthService()
     services["verifier"] = VerifierService(services["depth"])
-    services["correction"] = CorrectionService(services["vlm"])
 
     # Load models
     await services["depth"].load_model()
@@ -57,10 +58,19 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Get CORS origins from environment (comma-separated list)
+cors_origins_str = os.getenv("CORS_ORIGINS", "http://localhost:8501,http://localhost:3000")
+if cors_origins_str == "*":
+    cors_origins = ["*"]
+    logger.warning("CORS is configured to allow all origins (*). This is NOT recommended for production!")
+else:
+    cors_origins = [origin.strip() for origin in cors_origins_str.split(",")]
+    logger.info(f"CORS allowed origins: {cors_origins}")
+
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -70,12 +80,17 @@ app.add_middleware(
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint."""
+    depth_loaded = False
+    if services.get("depth") is not None:
+        # Check both model (MiDaS) and pipe (Depth Anything V2)
+        depth_loaded = services["depth"].model is not None or services["depth"].pipe is not None
+
     return HealthResponse(
         status="healthy",
         version="1.0.0",
         models_loaded={
             "vlm": services.get("vlm") is not None,
-            "depth": services.get("depth") is not None and services["depth"].model is not None,
+            "depth": depth_loaded,
         }
     )
 
@@ -128,13 +143,25 @@ async def ask_question(request: QuestionRequest):
             logger.info(f"Stage 3: Self-correcting ({len(verification_result.contradictions)} contradictions)")
             start_time = time.time()
 
-            correction_result = await services["correction"].correct(
+            # Convert Contradiction objects to dicts for VLM service
+            contradiction_dicts = [
+                {
+                    "type": c.type,
+                    "claim": c.claim,
+                    "evidence": c.evidence,
+                    "severity": c.severity
+                }
+                for c in verification_result.contradictions
+            ]
+
+            # Call VLM service directly for self-correction
+            correction_result = await services["vlm"].self_correct_with_reasoning(
                 image_base64=request.image,
+                original_question=request.question,
                 original_answer=initial_response["answer"],
                 original_reasoning=initial_response.get("reasoning", ""),
-                contradictions=verification_result.contradictions,
-                proof_overlay=verification_result.proof_overlay,
-                question=request.question
+                contradictions=contradiction_dicts,
+                proof_overlay_base64=verification_result.proof_overlay
             )
 
             revised_answer = correction_result["revised_answer"]

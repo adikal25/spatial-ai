@@ -2,13 +2,11 @@
 Vision-Language Model service using Claude (Anthropic).
 Implements self-reasoning loop for spatial question answering.
 """
+import asyncio
 import os
-import base64
-import json
 from typing import Dict, Any, List, Optional
-from io import BytesIO
 
-from anthropic import Anthropic
+from anthropic import AsyncAnthropic
 from loguru import logger
 
 from src.models.schemas import BoundingBox
@@ -24,7 +22,7 @@ class VLMService:
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY not found in environment variables")
 
-        self.client = Anthropic(api_key=api_key)
+        self.client = AsyncAnthropic(api_key=api_key)
         self.model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514")
 
     async def ask_with_boxes(
@@ -92,7 +90,10 @@ class VLMService:
             tools = [
                 {
                     "name": "provide_spatial_answer",
-                    "description": "Provide an answer to a spatial question with bounding boxes for detected objects. Use this tool to structure your response with object locations.",
+                    "description": (
+                        "Provide an answer to a spatial question with bounding boxes for detected objects. "
+                        "Use this tool to structure your response with object locations and explicit claims."
+                    ),
                     "input_schema": {
                         "type": "object",
                         "properties": {
@@ -110,6 +111,10 @@ class VLMService:
                                 "items": {
                                     "type": "object",
                                     "properties": {
+                                        "id": {
+                                            "type": "string",
+                                            "description": "Stable identifier (e.g., obj1, obj2) used in comparisons"
+                                        },
                                         "label": {
                                             "type": "string",
                                             "description": "Object label/name"
@@ -133,9 +138,51 @@ class VLMService:
                                         "confidence": {
                                             "type": "number",
                                             "description": "Confidence in detection (0-1)"
+                                        },
+                                        "position_hint": {
+                                            "type": "string",
+                                            "description": "Optional description such as foreground/midground/background"
                                         }
                                     },
-                                    "required": ["label", "x1", "y1", "x2", "y2"]
+                                    "required": ["id", "label", "x1", "y1", "x2", "y2"]
+                                }
+                            },
+                            "comparisons": {
+                                "type": "array",
+                                "description": "Structured comparisons between objects referencing their IDs",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "subject_id": {"type": "string"},
+                                        "object_id": {"type": "string"},
+                                        "attribute": {
+                                            "type": "string",
+                                            "enum": ["distance", "size"],
+                                            "description": "What attribute is being compared"
+                                        },
+                                        "relation": {
+                                            "type": "string",
+                                            "enum": ["closer", "further", "similar", "larger", "smaller", "same_size"]
+                                        }
+                                    },
+                                    "required": ["subject_id", "object_id", "attribute", "relation"]
+                                }
+                            },
+                            "counts": {
+                                "type": "array",
+                                "description": "Structured counts for the object types referenced in the answer",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "object_type": {"type": "string"},
+                                        "count": {"type": "integer"},
+                                        "object_ids": {
+                                            "type": "array",
+                                            "items": {"type": "string"},
+                                            "description": "Optional list of IDs included in the count"
+                                        }
+                                    },
+                                    "required": ["object_type", "count"]
                                 }
                             }
                         },
@@ -145,7 +192,7 @@ class VLMService:
             ]
 
             # Create message with image
-            response = self.client.messages.create(
+            response = await self.client.messages.create(
                 model=self.model,
                 max_tokens=4096,
                 tools=tools,
@@ -168,26 +215,30 @@ class VLMService:
 **Question:** {question}
 
 **Instructions:**
-1. First, identify ALL relevant objects in the image
+1. Identify ALL relevant objects in the image that support your answer.
 2. For EACH object, provide:
+   - A unique identifier (e.g., obj1, obj2) that you will reuse in comparisons
    - A clear label/name
    - Accurate bounding box (normalized coordinates 0-1)
-   - Your estimate of its relative position (foreground/midground/background)
+   - Optional position hint (foreground, middle, background)
 
-3. When making comparisons between objects, be EXPLICIT:
-   - Use clear comparative language: "Object A is closer/further than Object B"
-   - Use clear size language: "Object A is larger/smaller than Object B"
-   - Avoid vague terms like "similar" or "about the same" unless they truly are
+3. Make explicit, structured comparisons:
+   - Use the tool's `comparisons` array to declare distance or size relationships referencing object IDs.
+   - Set `attribute` to `distance` or `size` and choose `relation` from: closer, further, similar, larger, smaller, same_size.
+   - Only claim "similar" when the relationship truly is close.
+   - Avoid vague natural-language comparisons; encode them structurally.
 
-4. In your reasoning, explain your spatial judgment:
-   - What visual cues indicate depth? (occlusion, size perspective, position in frame)
-   - How do you estimate relative sizes?
-   - What makes you confident in your assessment?
+4. Provide count statements through the `counts` array when the question asks "how many". Reference the exact IDs you counted when possible.
 
-5. Use the provide_spatial_answer tool with:
+5. In your reasoning, explain:
+   - Which visual cues indicate depth (occlusion, size perspective, position in frame)
+   - Why you believe the structured comparisons are correct
+
+6. Use the provide_spatial_answer tool with:
    - A direct, clear answer to the question
    - Detailed reasoning explaining your spatial analysis
    - All detected objects with accurate bounding boxes
+   - Structured comparison/count entries that align with your textual answer
 
 **Be specific and decisive** - avoid hedging unless genuinely uncertain."""
                             }
@@ -199,7 +250,11 @@ class VLMService:
             # Parse tool use response
             answer = ""
             reasoning = ""
-            bounding_boxes = []
+            bounding_boxes: List[BoundingBox] = []
+            structured_claims: Dict[str, List[Dict[str, Any]]] = {
+                "comparisons": [],
+                "counts": []
+            }
 
             for block in response.content:
                 if block.type == "tool_use" and block.name == "provide_spatial_answer":
@@ -207,19 +262,11 @@ class VLMService:
                     answer = tool_input.get("answer", "")
                     reasoning = tool_input.get("reasoning", "")
                     objects = tool_input.get("objects", [])
-
-                    # Convert to BoundingBox objects
-                    bounding_boxes = [
-                        BoundingBox(
-                            x1=obj["x1"],
-                            y1=obj["y1"],
-                            x2=obj["x2"],
-                            y2=obj["y2"],
-                            label=obj.get("label"),
-                            confidence=obj.get("confidence", 0.9)
-                        )
-                        for obj in objects
-                    ]
+                    bounding_boxes = self._parse_bounding_boxes(objects)
+                    structured_claims = {
+                        "comparisons": self._normalize_comparisons(tool_input.get("comparisons", [])),
+                        "counts": self._normalize_counts(tool_input.get("counts", []))
+                    }
                 elif block.type == "text":
                     # Fallback to text response if no tool use
                     if not answer:
@@ -232,12 +279,114 @@ class VLMService:
                 "answer": answer,
                 "reasoning": reasoning,
                 "bounding_boxes": bounding_boxes,
+                "structured_claims": structured_claims,
                 "model": self.model
             }
 
         except Exception as e:
             logger.error(f"Error querying Claude: {str(e)}")
             raise
+
+    @staticmethod
+    def _parse_bounding_boxes(objects: List[Dict[str, Any]]) -> List[BoundingBox]:
+        """Convert raw Claude output into sanitized BoundingBox objects."""
+        boxes: List[BoundingBox] = []
+        for idx, obj in enumerate(objects):
+            try:
+                x1 = float(obj["x1"])
+                y1 = float(obj["y1"])
+                x2 = float(obj["x2"])
+                y2 = float(obj["y2"])
+
+                # Clamp to valid range and ensure coordinates are ordered
+                x1 = max(0.0, min(1.0, x1))
+                y1 = max(0.0, min(1.0, y1))
+                x2 = max(0.0, min(1.0, x2))
+                y2 = max(0.0, min(1.0, y2))
+
+                if x1 > x2:
+                    x1, x2 = x2, x1
+                if y1 > y2:
+                    y1, y2 = y2, y1
+
+                if abs(x2 - x1) < 1e-4 or abs(y2 - y1) < 1e-4:
+                    logger.warning("Discarding zero-area bounding box from Claude output")
+                    continue
+
+                object_id = str(obj.get("id") or f"obj_{idx}").strip() or f"obj_{idx}"
+                label = obj.get("label")
+                confidence = obj.get("confidence", 0.9)
+
+                boxes.append(BoundingBox(
+                    x1=x1,
+                    y1=y1,
+                    x2=x2,
+                    y2=y2,
+                    label=label,
+                    confidence=confidence,
+                    object_id=object_id
+                ))
+            except (KeyError, TypeError, ValueError) as err:
+                logger.warning(f"Skipping malformed bounding box from Claude: {err}")
+
+        return boxes
+
+    @staticmethod
+    def _normalize_comparisons(raw_claims: Optional[List[Dict[str, Any]]]) -> List[Dict[str, str]]:
+        """Normalize structured comparison claims."""
+        normalized: List[Dict[str, str]] = []
+        if not raw_claims:
+            return normalized
+
+        for claim in raw_claims:
+            try:
+                subject_id = str(claim["subject_id"]).strip()
+                object_id = str(claim["object_id"]).strip()
+                attribute = str(claim.get("attribute", "distance")).lower()
+                relation = str(claim.get("relation", "similar")).lower()
+
+                if not subject_id or not object_id:
+                    continue
+
+                normalized.append({
+                    "subject_id": subject_id,
+                    "object_id": object_id,
+                    "attribute": attribute,
+                    "relation": relation
+                })
+            except (KeyError, TypeError, ValueError) as err:
+                logger.warning(f"Skipping malformed comparison claim: {err}")
+
+        return normalized
+
+    @staticmethod
+    def _normalize_counts(raw_counts: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        """Normalize structured count claims."""
+        normalized: List[Dict[str, Any]] = []
+        if not raw_counts:
+            return normalized
+
+        for claim in raw_counts:
+            try:
+                object_type = str(claim["object_type"]).strip()
+                count = int(claim["count"])
+
+                if not object_type:
+                    continue
+
+                object_ids = None
+                if claim.get("object_ids"):
+                    object_ids = [str(obj_id).strip() for obj_id in claim["object_ids"] if str(obj_id).strip()]
+
+                normalized.append({
+                    "object_type": object_type,
+                    "count": count,
+                    "object_ids": object_ids or []
+                })
+            except (KeyError, TypeError, ValueError) as err:
+                logger.warning(f"Skipping malformed count claim: {err}")
+
+        return normalized
 
     async def self_correct_with_reasoning(
         self,
@@ -308,7 +457,7 @@ class VLMService:
             ])
 
             # Self-correction prompt with reasoning loop
-            response = self.client.messages.create(
+            response = await self.client.messages.create(
                 model=self.model,
                 max_tokens=4096,
                 messages=[
