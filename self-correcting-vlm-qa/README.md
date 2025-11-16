@@ -300,7 +300,7 @@ See [example_usage.py](example_usage.py) for programmatic usage.
 - Research on VLM spatial hallucinations in 3D  
 - Indoor navigation and mapping QA  
 
----
+
 
 ## Limitations
 - Depth-only mode cannot reason about true 3D thickness or containment  
@@ -309,7 +309,7 @@ See [example_usage.py](example_usage.py) for programmatic usage.
 - Bounding boxes still come from Claude  
 - Test suite currently covers only API + schema validation  
 
----
+
 
 ## Extension Ideas
 
