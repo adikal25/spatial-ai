@@ -4,7 +4,7 @@ Handles spatial question answering plus self-correction.
 """
 import json
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from loguru import logger
 from openai import OpenAI
@@ -165,7 +165,8 @@ class VLMService:
         original_answer: str,
         original_reasoning: str,
         contradictions: List[Dict[str, Any]],
-        proof_overlay_base64: str
+        proof_overlay_base64: str,
+        geometry_summary: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Self-correction with explicit reasoning loop using GPT-5-nano."""
         try:
@@ -185,6 +186,10 @@ class VLMService:
                 for i, c in enumerate(contradictions)
             ]) or "No contradictions provided."
 
+            geometry_section = ""
+            if geometry_summary:
+                geometry_section = f"\n## 3D Geometry Summary\n{geometry_summary}\n"
+
             prompt = f"""# Self-Correction Task
 
 You previously answered a spatial question about an image. Review your answer using geometric evidence.
@@ -200,6 +205,7 @@ You previously answered a spatial question about an image. Review your answer us
 
 ## Geometric Contradictions Found
 {evidence_text}
+{geometry_section}
 
 Follow this process:
 1. Review the original image

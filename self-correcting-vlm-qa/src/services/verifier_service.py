@@ -25,11 +25,13 @@ class VerificationResult:
         contradictions: List[Contradiction],
         proof_overlay: str,
         fvdb_debug: Optional[Dict[str, Any]] = None,
+        geometry_summary: Optional[str] = None,
     ):
         self.spatial_metrics = spatial_metrics
         self.contradictions = contradictions
         self.proof_overlay = proof_overlay
         self.fvdb_debug = fvdb_debug or {}
+        self.geometry_summary = geometry_summary
 
 
 class VerifierService:
@@ -77,6 +79,7 @@ class VerifierService:
 
             # Augment with 3D centroids & distances if fVDB is enabled
             fvdb_debug: Optional[Dict[str, Any]] = None
+            fvdb_summary: Optional[str] = None
             if self.fvdb_3d_service is not None and self.fvdb_3d_service.enabled:
                 fvdb_debug = self.verify_with_3d(
                     depth_map=depth_map,
@@ -85,6 +88,8 @@ class VerifierService:
                     answer=vlm_response.get("answer", ""),
                     reasoning=vlm_response.get("reasoning", ""),
                 )
+                if fvdb_debug and fvdb_debug.get("enabled"):
+                    fvdb_summary = self._build_fvdb_summary(spatial_metrics, fvdb_debug)
 
             # Detect contradictions (uses 3D z if available)
             contradictions = self._detect_contradictions(
@@ -111,6 +116,7 @@ class VerifierService:
                 contradictions=contradictions,
                 proof_overlay=proof_overlay,
                 fvdb_debug=fvdb_debug,
+                geometry_summary=fvdb_summary,
             )
 
         except Exception as e:
@@ -489,3 +495,55 @@ class VerifierService:
         Convert depth map value to estimated distance (rough approximation).
         """
         return depth_value / 10.0
+
+    @staticmethod
+    def _build_fvdb_summary(
+        spatial_metrics: List[SpatialMetrics],
+        fvdb_debug: Dict[str, Any],
+    ) -> Optional[str]:
+        """Serialize fVDB centroids/distances into a text block for downstream prompts."""
+        if not fvdb_debug or not fvdb_debug.get("enabled"):
+            return None
+
+        lines: List[str] = []
+        voxel_count = fvdb_debug.get("voxel_count")
+        centroids = fvdb_debug.get("centroids_3d", [])
+        pairwise = fvdb_debug.get("pairwise_distances", {})
+
+        lines.append("3D voxel reconstruction summary:")
+        if isinstance(voxel_count, int):
+            lines.append(f"- Total occupied voxels: {voxel_count}")
+
+        index_to_label: Dict[int, str] = {
+            idx: metric.object_id for idx, metric in enumerate(spatial_metrics)
+        }
+
+        if centroids:
+            lines.append("- Object centroids (x, y, z in scene units):")
+            for idx, metric in enumerate(spatial_metrics):
+                centroid = centroids[idx] if idx < len(centroids) else None
+                label = metric.object_id
+                if centroid:
+                    cx = centroid["x"]
+                    cy = centroid["y"]
+                    cz = centroid["z"]
+                    lines.append(f"  • {label}: ({cx:.3f}, {cy:.3f}, {cz:.3f})")
+                else:
+                    lines.append(f"  • {label}: not enough voxels to estimate centroid")
+
+        if pairwise:
+            lines.append("- Pairwise centroid distances:")
+            for key, dist in sorted(pairwise.items()):
+                try:
+                    left, right = key.split("-")
+                    li = index_to_label.get(int(left), f"obj_{left}")
+                    ri = index_to_label.get(int(right), f"obj_{right}")
+                except (ValueError, AttributeError):
+                    li = key
+                    ri = ""
+                if ri:
+                    lines.append(f"  • {li} ↔ {ri}: {dist:.3f}")
+                else:
+                    lines.append(f"  • {key}: {dist:.3f}")
+
+        return "\n".join(lines) if len(lines) > 1 else None

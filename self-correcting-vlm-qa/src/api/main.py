@@ -140,7 +140,8 @@ async def ask_question(request: QuestionRequest):
                 original_reasoning=initial_response.get("reasoning", ""),
                 contradictions=verification_result.contradictions,
                 proof_overlay=verification_result.proof_overlay,
-                question=request.question
+                question=request.question,
+                geometry_summary=verification_result.geometry_summary,
             )
 
             revised_answer = correction_result["revised_answer"]
@@ -174,6 +175,7 @@ async def ask_question(request: QuestionRequest):
                 "contradictions_found": len(verification_result.contradictions),
                 "original_reasoning": initial_response.get("reasoning", ""), 
                 "fvdb_3d": verification_result.fvdb_debug, # new debug info
+                "fvdb_geometry_summary": verification_result.geometry_summary,
             }
         )
 

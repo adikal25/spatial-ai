@@ -2,7 +2,7 @@
 Self-correction service that makes the VLM refine answers using geometric evidence.
 Implements explicit self-reasoning loop.
 """
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from loguru import logger
 
@@ -23,7 +23,8 @@ class CorrectionService:
         original_reasoning: str,
         contradictions: List[Contradiction],
         proof_overlay: str,
-        question: str
+        question: str,
+        geometry_summary: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Make the VLM self-correct its answer using geometric evidence.
@@ -36,6 +37,7 @@ class CorrectionService:
             contradictions: List of detected contradictions
             proof_overlay: Proof image with depth visualization
             question: Original question
+            geometry_summary: Optional textual summary of 3D voxel metrics
 
         Returns:
             Dictionary with revised answer, self-reflection, and confidence score
@@ -59,7 +61,8 @@ class CorrectionService:
                 original_answer=original_answer,
                 original_reasoning=original_reasoning,
                 contradictions=contradiction_dicts,
-                proof_overlay_base64=proof_overlay
+                proof_overlay_base64=proof_overlay,
+                geometry_summary=geometry_summary,
             )
 
             logger.info(f"Self-correction complete, confidence: {result['confidence']}")
