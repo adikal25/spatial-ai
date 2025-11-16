@@ -53,7 +53,12 @@ htmlcov/
 *.ckpt
 *.safetensors
 data/
-models/
+models/*
+!models/**/*.py
+!models/**/*.json
+!models/**/*.yaml
+!models/**/*.txt
+
 
 # OS
 .DS_Store
