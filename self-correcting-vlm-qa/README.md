@@ -363,3 +363,10 @@ MIT License - see [LICENSE](LICENSE)
 - [FastAPI](https://fastapi.tiangolo.com/) - Web framework
 - [Streamlit](https://streamlit.io/) - UI framework
 - PyTorch, Transformers, Pydantic
+
+##Acknowledgements
+
+Thank you to our sponsors, organizers, and collaborators for supporting this project.
+
+<img src="Ironsite.jpeg" width="260"/> <div align="center"> <img src="C++.jpeg" width="260"/> <img src="DSI.jpeg" width="260"/>  <img src="Vandy.jpeg" width="260"/> </div>
+
