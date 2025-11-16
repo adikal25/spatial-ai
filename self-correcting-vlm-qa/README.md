@@ -1,398 +1,308 @@
 # 🔍 Self-Correcting Vision-Language QA with Claude
 
-An automated verification and self-correction pipeline using **Claude Sonnet 4** that addresses spatial reasoning hallucinations through depth geometry and explicit self-reasoning loops.
+Automated verification and self-correction for spatial questions that pairs **Claude Sonnet 4** with depth geometry, contradiction detection, and an explicit reflection loop.
 
-## 🎯 Overview
+## Contents
+- [Overview](#overview)
+- [Getting Started](#getting-started)
+- [Why This Works](#why-this-works)
+- [Architecture](#architecture)
+- [Configuration](#configuration)
+- [API](#api)
+- [Use Cases](#use-cases)
+- [Limitations](#limitations)
+- [Extension Ideas](#extension-ideas)
+- [Contributing](#contributing)
+- [License](#license)
 
-Vision-Language Models (VLMs) often hallucinate about object sizes, distances, and counts, contradicting basic spatial geometry. This project implements a three-stage pipeline with **Claude's self-reasoning capabilities**:
+## Overview
 
-1. **Ask** (1-3s): Claude generates initial response with bounding boxes and reasoning
-2. **Verify** (1-4s): Depth estimation + geometric contradiction detection
-3. **Correct** (1-4s): Claude engages in explicit self-reflection and correction
+Vision-Language Models can hallucinate about **relative distance, size, occlusion, and object counts**. This project implements a three-stage verification loop:
 
-## ✨ Key Features
+1. **Ask (≈1‑3 s):** Claude Sonnet 4 answers the question with reasoning and bounding boxes
+2. **Verify (≈1‑4 s):** Depth Anything V2 generates depth maps to validate spatial claims
+3. **Correct (≈1‑4 s):** Claude self-reflects on contradictions and revises its answer
 
-- **Claude-Powered**: Uses Claude Sonnet 4 with vision capabilities and tool use
-- **Self-Reasoning Loop**: Claude explicitly reflects on its mistakes and corrects them
-- **Multi-Signal Verification**: Uses Depth Anything V2 + occlusion + position cues for reliable validation
-- **State-of-the-Art Depth**: Depth Anything V2 (2024) - significantly better than MiDaS
-- **Transparent Reasoning**: See Claude's internal reasoning and self-reflection
-- **Real-time Processing**: Target latency <8s end-to-end
-- **Visual Proof**: Generates proof overlays with depth maps and annotations
-- **REST API**: FastAPI backend for easy integration
-- **Interactive Demo**: Streamlit web interface
+The FastAPI backend exposes this pipeline as `/ask`, and the Streamlit UI visualizes depth overlays, contradictions, and metrics.
 
-## 🏗️ Architecture
+## Getting Started
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     User Input                              │
-│              (Image + Spatial Question)                      │
-└────────────────────┬────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Stage 1: ASK                                               │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │ Claude Sonnet 4 with Vision                          │   │
-│  │ - Tool use for structured bounding boxes             │   │
-│  │ - Initial spatial reasoning                          │   │
-│  │ - Explicit reasoning trace                           │   │
-│  └──────────────────────────────────────────────────────┘   │
-└────────────────────┬────────────────────────────────────────┘
-                     │ Answer + Reasoning + Bounding Boxes
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Stage 2: VERIFY                                            │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │ Depth Estimation (MiDaS)                             │   │
-│  │ - Generate depth map                                 │   │
-│  │ - Extract object depths                              │   │
-│  └──────────────────────────────────────────────────────┘   │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │ Geometric Verifier                                   │   │
-│  │ - Detect size contradictions                         │   │
-│  │ - Detect distance contradictions                     │   │
-│  │ - Detect count contradictions                        │   │
-│  │ - Generate proof overlay                             │   │
-│  └──────────────────────────────────────────────────────┘   │
-└────────────────────┬────────────────────────────────────────┘
-                     │ Contradictions + Proof Image
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Stage 3: SELF-CORRECTION LOOP (if contradictions found)    │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │ Claude Self-Reasoning Process                        │   │
-│  │ 1. Review: Re-examine original image                 │   │
-│  │ 2. Analyze: Study depth visualization                │   │
-│  │ 3. Evaluate: Compare reasoning vs evidence           │   │
-│  │ 4. Reflect: Identify errors made                     │   │
-│  │ 5. Correct: Provide revised answer                   │   │
-│  │ - Explicit self-reflection                           │   │
-│  │ - Honest error acknowledgment                        │   │
-│  │ - Confidence score                                   │   │
-│  └──────────────────────────────────────────────────────┘   │
-└────────────────────┬────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Final Output                                   │
-│  - Original Answer + Reasoning                              │
-│  - Revised Answer (if corrected)                            │
-│  - Self-Reflection                                          │
-│  - Confidence Score                                         │
-│  - Proof Overlay                                            │
-│  - Spatial Metrics                                          │
-│  - Performance Stats                                        │
-└─────────────────────────────────────────────────────────────┘
-```
+### Requirements
+- Python **3.11+**
+- **Anthropic API key** for Claude Sonnet 4
+- (Optional) NVIDIA GPU for faster depth inference; CPU works but is slower
+- Internet access on first run for downloading Hugging Face weights (~100 MB)
 
-## 📋 Requirements
+### Quick Setup
 
-- Python 3.11+
-- **Anthropic API key** (for Claude Sonnet 4)
-- (Optional) GPU for faster depth estimation
-
-## 🚀 Quick Start
-
-> **Want to deploy to the cloud?** See [DEPLOYMENT.md](DEPLOYMENT.md) for instructions.
-
-### Simple Demo (Recommended)
-
-1. **Clone/navigate to the project**
 ```bash
+git clone https://github.com/yourusername/self-correcting-vlm-qa.git
 cd self-correcting-vlm-qa
+./setup.sh          # Creates venv, installs deps, copies .env template
+# Edit .env with your ANTHROPIC_API_KEY
+./run_demo.sh       # Boots FastAPI (port 8000) + Streamlit (port 8501)
 ```
 
-2. **Run setup script**
-```bash
-./setup.sh
-```
 
-3. **Add your Anthropic API key**
-```bash
-# Edit config/.env and add your key
-ANTHROPIC_API_KEY=your_anthropic_api_key_here
-```
 
-4. **Run the demo!**
-```bash
-./run_demo.sh
-```
+### Manual Setup
 
-The demo will open in your browser at http://localhost:8501
-
-**That's it!** Upload an image and ask spatial questions.
-
-### Manual Setup (Alternative)
-
-If you prefer manual setup:
-
-1. **Create virtual environment**
 ```bash
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-```
+cp config/.env.example .env
+# Edit .env to add ANTHROPIC_API_KEY
 
-2. **Set up environment**
-```bash
-cp config/.env.example config/.env
-# Edit config/.env and add your Anthropic API key
-```
+# Terminal 1: API
+python -m uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
 
-3. **Run API (Terminal 1)**
-```bash
-python -m uvicorn src.api.main:app --reload
-```
-
-4. **Run Demo (Terminal 2)**
-```bash
+# Terminal 2: Streamlit UI
 streamlit run demo/app.py
 ```
 
-## 🔧 Configuration
+**Additional helpers:**
+- `make install`, `make run`, `make test` (see [Makefile](Makefile))
+- `example_usage.py` - Python script example
+- See [QUICKSTART.md](QUICKSTART.md) for detailed walkthrough
+- See [DEPLOYMENT.md](DEPLOYMENT.md) for cloud deployment
 
-Edit `config/.env` to customize:
+## Why This Works
+
+- **Multi-signal verification:** Combines depth, occlusion, vertical position, and bounding box geometry. Contradictions require multiple signals to agree.
+- **State-of-the-art depth:** Uses Depth Anything V2 (small/base/large variants) with auto depth orientation detection. Falls back to MiDaS for CPU-only deployments.
+- **Transparent reasoning:** Claude provides explicit reasoning traces, and visual proof overlays show RGB + depth colormaps with bounding boxes.
+- **Production-ready:** Handles image resizing, provides detailed latency metrics, and includes health checks.
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                     User Input                               │
+│              (Image + Spatial Question)                      │
+└─────────────────────┬────────────────────────────────────────┘
+                      │
+                      ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Stage 1 · ASK (VLM)                                         │
+│  • Claude Sonnet 4 produces answer + reasoning + boxes      │
+└─────────────────────┬────────────────────────────────────────┘
+                      │
+                      ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Stage 2 · VERIFY (Depth Anything V2)                        │
+│  • Generate depth maps                                       │
+│  • Validate spatial claims with multi-signal checks          │
+│  • Create proof overlay                                      │
+└─────────────────────┬────────────────────────────────────────┘
+                      │
+                      ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Stage 3 · SELF-CORRECT                                      │
+│  • Feed Claude the contradictions + proof overlay            │
+│  • Enforce Review → Analyze → Reflect → Correct flow         │
+└─────────────────────┬────────────────────────────────────────┘
+                      │
+                      ▼
+              Final payload (answers, metrics, proof, latency)
+```
+
+### Key Components
+
+| Component | Implementation | Notes |
+| --- | --- | --- |
+| Vision-Language | Claude Sonnet 4 | Configurable via `CLAUDE_MODEL` |
+| Depth estimation | Depth Anything V2 | GPU if `ENABLE_GPU=true`, otherwise CPU |
+| Verification | Multi-signal (depth + occlusion + vertical + geometry) | Contradictions need multiple cues to agree |
+| UI | Streamlit + FastAPI | Visualizes all stages with latency tracking |
+
+### Repository Structure
+
+```
+self-correcting-vlm-qa/
+├── README.md                     # You are here
+├── QUICKSTART.md                 # Step-by-step setup guide
+├── DEPLOYMENT.md                 # Cloud deployment instructions
+├── requirements.txt              # Python dependencies
+├── Makefile                      # Common commands
+├── setup.sh                      # Automated setup script
+├── run_demo.sh                   # Start API + Streamlit together
+├── example_usage.py              # Python client example
+├── config/
+│   └── .env.example              # Environment variable template
+├── demo/
+│   └── app.py                    # Streamlit front-end
+├── src/
+│   ├── api/main.py               # FastAPI application
+│   ├── models/schemas.py         # Pydantic models
+│   ├── services/
+│   │   ├── vlm_service.py        # Claude interaction
+│   │   ├── depth_service.py      # Depth Anything V2 / MiDaS
+│   │   └── verifier_service.py   # Claim validation + overlays
+│   └── utils/image_utils.py      # Image processing utilities
+└── tests/
+    └── test_api.py               # API tests
+```
+
+## Configuration
+
+Environment variables (create `.env` in repo root from `config/.env.example`):
 
 ```env
-# API Keys
-ANTHROPIC_API_KEY=your_anthropic_api_key_here
-
-# Claude Configuration
+# Required
+ANTHROPIC_API_KEY=your_key_here
 CLAUDE_MODEL=claude-sonnet-4-20250514
 
-# Depth Model Configuration
-DEPTH_MODEL=depth_anything_v2
-# Options:
-#   depth_anything_v2 (recommended - state-of-the-art, default)
-#   depth_anything_v2_base (higher accuracy, slower)
-#   depth_anything_v2_large (best accuracy, slowest)
-#   midas_v3_small (legacy, faster but less accurate)
-#   midas_v3_dpt_large (legacy)
+# Depth models
+DEPTH_MODEL=depth_anything_v2         # append _base or _large if desired
+DEPTH_ORIENTATION=auto                # auto | invert | raw
+ENABLE_GPU=true                       # set false for CPU-only
 
-# Performance Settings
+# Verification thresholds
+RELATIVE_SIZE_THRESHOLD=0.3
+RELATIVE_DISTANCE_THRESHOLD=0.3
+DEPTH_CONFIDENCE_THRESHOLD=0.4
+
+# API settings
+CORS_ORIGINS=http://localhost:8501,http://localhost:3000
 MAX_IMAGE_SIZE=1024
-ENABLE_GPU=true
-
-# API Configuration
-API_HOST=0.0.0.0
-API_PORT=8000
-
-# Logging
-LOG_LEVEL=INFO
 ```
 
-## 📡 API Usage
+## API
 
-### Health Check
+### Endpoints
+- `GET /health` – Returns status and loaded models
+- `POST /ask` – Runs the Ask → Verify → Correct pipeline
 
-```bash
-curl http://localhost:8000/health
-```
-
-### Ask Question
+### Example Request
 
 ```bash
 curl -X POST http://localhost:8000/ask \
   -H "Content-Type: application/json" \
   -d '{
-    "image": "base64_encoded_image_data",
-    "question": "Which object is closer to the camera?",
-    "use_fallback": false
+    "image": "iVBORw0KGgoAAAANSUhEUgAAA...",  # base64 encoded
+    "question": "Which object is closer to the camera?"
   }'
 ```
 
-### Response Format
+### Example Response
 
 ```json
 {
-  "answer": "The car is closer to the camera.",
-  "revised_answer": "Actually, based on depth analysis, the tree is closer.",
-  "confidence": 0.85,
+  "answer": "The bus on the left is closest to the camera.",
+  "revised_answer": "After reviewing the depth overlay, the cyclist in the foreground is actually closest.",
+  "self_reflection": "I originally focused on size cues and ignored occlusion. The depth map shows the cyclist is nearer.",
+  "confidence": 0.82,
   "proof_overlay": "data:image/png;base64,...",
   "detected_objects": [
-    {
-      "x1": 0.1,
-      "y1": 0.2,
-      "x2": 0.5,
-      "y2": 0.8,
-      "label": "car",
-      "confidence": 0.9
-    }
+    {"x1": 0.05, "y1": 0.32, "x2": 0.32, "y2": 0.88, "object_id": "obj_0_bicycle", "label": "cyclist"}
   ],
   "spatial_metrics": [
     {
-      "object_id": "obj_0_car",
-      "depth_mean": 45.2,
-      "depth_std": 3.1,
-      "estimated_distance": 4.52
+      "object_id": "obj_0_bicycle",
+      "depth_mean": 18.4,
+      "depth_std": 2.1,
+      "estimated_distance": 18.4,
+      "estimated_size": {"width": 0.27, "height": 0.56}
     }
   ],
   "contradictions": [
     {
       "type": "distance",
-      "claim": "Car is closer",
-      "evidence": "Tree has lower depth value (32.1 vs 45.2)",
-      "severity": 0.7
+      "claim": "The bus is closest to the camera.",
+      "evidence": "Cyclist depth 18.4 vs bus depth 41.2; occlusion shows cyclist in front.",
+      "severity": 0.72
     }
   ],
-  "latency_ms": {
-    "ask_ms": 2100,
-    "verify_ms": 1800,
-    "correct_ms": 1500,
-    "total_ms": 5400
+  "latency_ms": {"ask_ms": 2350, "verify_ms": 3010, "correct_ms": 1875, "total_ms": 7235},
+  "metadata": {
+    "model_used": "claude-sonnet-4-20250514",
+    "contradictions_found": 1,
+    "original_reasoning": "I judged by object size..."
   }
 }
 ```
 
-## 🧪 Testing
+**Key fields:**
+- `detected_objects` - Normalized coordinates (0‑1)
+- `spatial_metrics.estimated_distance` - Relative depth (0‑100, no absolute scale)
+- `proof_overlay` - PNG with original image + depth colormap
+- `self_reflection` - Claude's reasoning about corrections
 
-Run tests with pytest:
+See [example_usage.py](example_usage.py) for programmatic usage.
 
-```bash
-pytest tests/
-```
+## Use Cases
 
-## 📊 Performance Targets
+- **Autonomous perception QA:** Validate spatial statements in AV/robotics datasets
+- **Robotics manipulation:** Verify "which object is reachable/closer" before executing commands
+- **Accessibility tools:** Provide reliable scene descriptions with uncertainty indicators
+- **Educational demos:** Show how reasoning, geometry, and self-correction interact
+- **Research instrumentation:** Log contradiction rates to study VLM spatial hallucinations
 
-| Metric | Gold | Silver | Bronze |
-|--------|------|--------|--------|
-| Total Latency | <4s | <8s | <12s |
-| Accuracy Improvement | +35pp | +25pp | +15pp |
-| Code Complexity | <800 LOC | <1200 LOC | <2000 LOC |
+## Limitations
 
-## 🏗️ Project Structure
+1. **Depth coverage** - Depth Anything V2 struggles with reflective/textureless regions
+2. **Bounding boxes** - Boxes come from Claude's output; missed objects can't be verified
+3. **Heuristic contradictions** - Simple threshold-based checks may miss nuanced spatial logic
+4. **Latency** - First request downloads ~100 MB of weights; CPU mode can take >10s
+5. **Limited tests** - Test suite only covers health + validation; no depth/contradiction regression fixtures
 
-```
-self-correcting-vlm-qa/
-├── src/
-│   ├── api/
-│   │   ├── __init__.py
-│   │   └── main.py                 # FastAPI application
-│   ├── services/
-│   │   ├── __init__.py
-│   │   ├── vlm_service.py          # VLM interaction
-│   │   ├── depth_service.py        # Depth estimation
-│   │   ├── verifier_service.py     # Contradiction detection
-│   │   └── correction_service.py   # Self-correction logic
-│   ├── models/
-│   │   ├── __init__.py
-│   │   └── schemas.py              # Pydantic models
-│   └── utils/
-│       └── __init__.py
-├── demo/
-│   └── app.py                      # Streamlit demo
-├── tests/
-│   └── __init__.py
-├── config/
-│   └── .env.example
-├── requirements.txt
-├── Dockerfile
-├── docker-compose.yml
-├── .gitignore
-└── README.md
-```
 
-## 🔍 How It Works
+## Extension Ideas
 
-### 1. Initial Claude Query (Ask Stage)
+1. **Multi-VLM ensemble** - Wire `use_fallback` to open-source models (LLaVA, GPT-4o) or use majority voting
+2. **Enhanced depth** - Implement ZoeDepth or multi-view depth reconstruction
+3. **Richer contradictions** - Add orientation, containment, metric reasoning ("object is 2m behind line")
+4. **Automated evaluation** - Create benchmark datasets to measure contradiction detection accuracy
+5. **Async processing** - Add queue/background workers for concurrent `/ask` requests
+6. **Metrics dashboard** - Persist stats to database with Prometheus/Grafana monitoring
 
-The system queries **Claude Sonnet 4** with the user's spatial question and image. Claude responds with:
-- Natural language answer
-- Internal reasoning about spatial relationships
-- Bounding boxes for detected objects (via tool use)
+## Future Directions
 
-### 2. Geometric Verification (Verify Stage)
+### 3D Voxel-Based Spatial Reasoning
 
-The verifier:
-1. Uses MiDaS to generate a depth map
-2. Extracts depth values for each bounding box
-3. Computes spatial metrics (mean depth, size, estimated distance)
-4. Compares metrics against VLM claims
-5. Detects contradictions in:
-   - **Relative distances**: "Object A is closer than B" vs depth values
-   - **Relative sizes**: "Same size" vs bounding box areas
-   - **Object counts**: "3 cars" vs detected objects
-6. Generates proof overlay with side-by-side comparison
+Move beyond 2D depth maps to true 3D scene understanding using **NVIDIA FVDB** (Fast Voxel Database):
 
-### 3. Self-Correction with Reasoning Loop (Correct Stage)
+**Architecture:**
+1. **3D Scene Reconstruction** - Integrate NVIDIA FVDB to convert monocular images into sparse voxel representations, creating a volumetric 3D scene graph
+2. **Voxel-Level Verification** - Replace 2D bounding box verification with 3D occupancy grids, enabling accurate spatial relationship reasoning (containment, occlusion, relative positions)
+3. **Fine-tuned Vision Model** - Train a specialized vision model on carefully labeled 3D spatial datasets with ground-truth voxel annotations
+4. **Enhanced Self-Correction Loop** - Feed voxel-level contradictions back to the VLM with 3D proof visualizations (volumetric renderings, cross-sections)
 
-If contradictions are found, **Claude engages in explicit self-reasoning**:
-1. Claude receives:
-   - Original image
-   - Depth visualization proof overlay
-   - Its original answer and reasoning
-   - Detailed contradictions with geometric evidence
+**Benefits:**
+- True 3D spatial understanding vs. pseudo-3D depth estimation
+- Handle complex occlusions and multi-object spatial relationships
+- Support volumetric queries ("Is object A inside object B?", "What's between A and B?")
+- Enable robotic path planning and manipulation tasks with precise 3D coordinates
 
-2. Claude follows a structured self-reflection process:
-   - **Review**: Re-examines the original image
-   - **Analyze**: Studies the depth map visualization
-   - **Evaluate**: Compares its reasoning against geometric measurements
-   - **Reflect**: Explicitly identifies where it went wrong
-   - **Correct**: Provides revised answer with honest error acknowledgment
+**Implementation Path:**
+- Replace `DepthService` with `VoxelService` using NVIDIA FVDB + occupancy networks
+- Create curated dataset of images with ground-truth 3D voxel labels
+- Fine-tune vision model (e.g., ViT, CLIP) on voxel prediction task
+- Extend `VerifierService` to validate claims against 3D voxel grids
+- Add 3D visualization overlay (volumetric rendering or interactive 3D viewer)
 
-3. Claude outputs:
-   - Self-reflection explaining its thought process
-   - Revised answer (or reaffirmation if evidence is inconclusive)
-   - Confidence score (0-1)
+This would transform the system from depth-augmented 2D reasoning to full 3D geometric understanding.
 
-## 🎨 Example Use Cases
+## Contributing
 
-- **Autonomous vehicles**: Verify object distance estimates
-- **Robotics**: Validate spatial reasoning for manipulation
-- **Accessibility**: Describe scene layouts accurately
-- **Education**: Teach spatial reasoning with feedback
-- **Research**: Study VLM spatial understanding limitations
+Pull requests are welcome! Please:
 
-## 🤝 Contributing
+1. Fork the repo and create a feature branch
+2. Run `pytest` and add tests for new features
+3. Keep docs in sync with code changes
+4. Include screenshots/logs for UI or pipeline changes
 
-Contributions welcome! Please:
+## License
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
-
-## 📝 License
-
-MIT License - see LICENSE file for details
-
-## 🙏 Acknowledgments
-
-- **Anthropic**: Claude Sonnet 4 with vision capabilities and self-reasoning
-- **Depth Anything V2**: State-of-the-art monocular depth estimation (2024)
-- **MiDaS**: Intel ISL for depth estimation (legacy support)
-- **FastAPI**: Web framework
-- **Streamlit**: Demo UI framework
-
-## 📚 References
-
-- [Depth Anything V2: Foundation Models for Monocular Depth Estimation](https://depth-anything-v2.github.io/)
-- [MiDaS: Monocular Depth Estimation](https://github.com/isl-org/MiDaS)
-- [Claude 4 by Anthropic](https://www.anthropic.com/claude)
-- [Anthropic API Documentation](https://docs.anthropic.com/)
-
-## 🐛 Known Limitations
-
-- Depth estimation accuracy depends on monocular depth model limitations
-- Contradiction detection uses heuristics; may miss complex cases
-- Requires good lighting and clear object boundaries
-- Performance depends on VLM API latency
-
-## 🗺️ Roadmap
-
-- [x] Support for Depth Anything V2 (state-of-the-art)
-- [x] Multi-signal validation (depth + occlusion + position)
-- [ ] Support for ZoeDepth
-- [ ] Advanced semantic NLP for better contradiction detection
-- [ ] Multi-turn conversation support
-- [ ] Fine-tuned VLM for spatial reasoning
-- [ ] Batch processing support
-- [ ] Metrics dashboard
-- [ ] A/B testing framework
+MIT License - see [LICENSE](LICENSE)
 
 ---
 
-**Built with ❤️ for accurate spatial reasoning using Claude's self-correction capabilities**
+**Built with:**
+- [Anthropic Claude Sonnet 4](https://docs.anthropic.com/) - Vision + reasoning
+- [Depth Anything V2](https://depth-anything-v2.github.io/) - Monocular depth estimation
+- [MiDaS](https://github.com/isl-org/MiDaS) - Depth estimation fallback
+- [FastAPI](https://fastapi.tiangolo.com/) - Web framework
+- [Streamlit](https://streamlit.io/) - UI framework
+- PyTorch, Transformers, Pydantic
