@@ -26,6 +26,7 @@ The system reduces spatial hallucinations by detecting contradictions using dept
 Vision-Language Models can hallucinate about **relative distance, size, occlusion, and object counts**. This project implements a three-stage verification loop:
 
 **1. Ask (≈1‑3 s):** Claude Sonnet 4 answers the question with reasoning and bounding boxes
+
 **2. Verify (≈1‑4 s):**
    Depending on configuration, the system uses either:
 
