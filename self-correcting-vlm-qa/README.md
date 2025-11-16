@@ -114,33 +114,48 @@ This dramatically reduces spatial hallucination rates.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                     User Input                               │
-│              (Image + Spatial Question)                      │
+│                        User Input                            │
+│                 (Image + Spatial Question)                   │
 └─────────────────────┬────────────────────────────────────────┘
                       │
                       ▼
 ┌──────────────────────────────────────────────────────────────┐
-│  Stage 1 · ASK (VLM)                                         │
-│  • Claude Sonnet 4 produces answer + reasoning + boxes      │
+│  Stage 1 · ASK (Claude)                                      │
+│  • Initial answer                                            │
+│  • Reasoning trace                                           │
+│  • Bounding boxes                                            │
 └─────────────────────┬────────────────────────────────────────┘
                       │
                       ▼
 ┌──────────────────────────────────────────────────────────────┐
-│  Stage 2 · VERIFY (Depth Anything V2)                        │
-│  • Generate depth maps                                       │
-│  • Validate spatial claims with multi-signal checks          │
-│  • Create proof overlay                                      │
+│  Stage 2 · VERIFY (Depth or Voxel Geometry)                  │
+│                                                              │
+│    Depth Mode (2D):                                          │
+│      • Depth Anything V2                                     │
+│      • Occlusion checks                                      │
+│      • Distance estimates                                    │
+│      • Vertical position + size cues                         │
+│                                                              │
+│    Voxel Mode (3D, experimental):                            │
+│      • NVIDIA FVDB sparse voxel reconstruction               │
+│      • 3D occupancy grid                                     │
+│      • 3D distances, adjacency, containment                  │
+│                                                              │
+│    • Contradiction detection                                 │
+│    • Proof overlay generation (depth map or voxel render)    │
 └─────────────────────┬────────────────────────────────────────┘
                       │
                       ▼
 ┌──────────────────────────────────────────────────────────────┐
-│  Stage 3 · SELF-CORRECT                                      │
-│  • Feed Claude the contradictions + proof overlay            │
-│  • Enforce Review → Analyze → Reflect → Correct flow         │
+│  Stage 3 · SELF-CORRECT (Claude)                             │
+│  • Review contradictions                                     │
+│  • Generate corrected answer                                 │
+│  • Provide reflection + confidence score                     │
 └─────────────────────┬────────────────────────────────────────┘
                       │
                       ▼
-              Final payload (answers, metrics, proof, latency)
+                Final Output (answer, metrics, overlays, latency)
+
 ```
 
 ### Key Components
