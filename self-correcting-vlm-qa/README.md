@@ -347,7 +347,6 @@ Pull requests are welcome! Please:
 
 MIT License - see [LICENSE](LICENSE)
 
----
 
 **Built with:**
 - [Anthropic Claude Sonnet 4](https://docs.anthropic.com/) - Vision + reasoning
