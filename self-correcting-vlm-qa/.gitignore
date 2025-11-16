@@ -53,7 +53,8 @@ htmlcov/
 *.ckpt
 *.safetensors
 data/
-models/
+# Ignore downloaded model checkpoints, but NOT src/models/
+!src/models/
 
 # OS
 .DS_Store
