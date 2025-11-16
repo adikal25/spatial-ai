@@ -25,8 +25,8 @@ The system reduces spatial hallucinations by detecting contradictions using dept
 
 Vision-Language Models can hallucinate about **relative distance, size, occlusion, and object counts**. This project implements a three-stage verification loop:
 
-1. **Ask (≈1‑3 s):** Claude Sonnet 4 answers the question with reasoning and bounding boxes
-2. **Verify (≈1‑4 s):**
+**1. Ask (≈1‑3 s):** Claude Sonnet 4 answers the question with reasoning and bounding boxes
+**2. Verify (≈1‑4 s):**
    Depending on configuration, the system uses either:
 
    - **Depth Mode (default):** Depth Anything V2 depth estimation
@@ -36,7 +36,7 @@ This system supports a hybrid geometry pipeline: fast 2D depth verification for 
 
 Contradictions are detected using geometry signals (depth, occlusion, voxel occupancy, 3D distances, containment, etc.).
 
-3. **Self-Correct (≈1‑4 s):** Claude self-reflects on contradictions and revises its answer
+**3. Self-Correct (≈1‑4 s):** Claude self-reflects on contradictions and revises its answer
 
 The backend is implemented with FastAPI, and an optional Streamlit UI displays depth maps, voxel renders, contradictions, and latency metrics.
 
