@@ -2,6 +2,7 @@
 Depth estimation service using Depth Anything V2, MiDaS, or ZoeDepth.
 Provides depth maps for geometric verification.
 """
+import asyncio
 import os
 import base64
 import numpy as np
@@ -22,10 +23,15 @@ class DepthService:
         """Initialize depth estimation service."""
         # Default to Depth Anything V2 (best performance)
         self.model_name = os.getenv("DEPTH_MODEL", "depth_anything_v2")
-        self.device = torch.device("cuda" if torch.cuda.is_available() and os.getenv("ENABLE_GPU", "true").lower() == "true" else "cpu")
+        self.device = torch.device(
+            "cuda"
+            if torch.cuda.is_available() and os.getenv("ENABLE_GPU", "true").lower() == "true"
+            else "cpu"
+        )
         self.model = None
         self.transform = None
         self.pipe = None  # For Depth Anything V2 pipeline
+        self.invert_depth_map = self._should_invert_depth()
 
         logger.info(f"Depth service initialized with model: {self.model_name}, device: {self.device}")
 
@@ -129,36 +135,42 @@ class DepthService:
 
             # Use Depth Anything V2 if available
             if self.pipe is not None:
-                # Use Hugging Face pipeline
-                result = self.pipe(img)
-                depth_map = np.array(result["depth"])
+                # Use Hugging Face pipeline off the event loop
+                result = await asyncio.to_thread(self.pipe, img)
+                depth_map = np.array(result["depth"]).astype(np.float32)
 
-                # Normalize to float
-                if depth_map.dtype == np.uint8:
-                    depth_map = depth_map.astype(np.float32)
-
-                logger.info(f"Depth map estimated (Depth Anything V2): shape={depth_map.shape}, min={depth_map.min():.2f}, max={depth_map.max():.2f}")
+                logger.info(
+                    f"Depth map estimated (Depth Anything V2): shape={depth_map.shape}, "
+                    f"min={depth_map.min():.2f}, max={depth_map.max():.2f}"
+                )
 
             else:
                 # Use MiDaS (legacy)
-                img_np = np.array(img)
+                async def _predict_midas() -> np.ndarray:
+                    img_np = np.array(img)
+                    input_batch = self.transform(img_np).to(self.device)
 
-                # Apply transforms
-                input_batch = self.transform(img_np).to(self.device)
+                    def _forward():
+                        with torch.no_grad():
+                            prediction = self.model(input_batch)
+                            prediction_resized = torch.nn.functional.interpolate(
+                                prediction.unsqueeze(1),
+                                size=img_np.shape[:2],
+                                mode="bicubic",
+                                align_corners=False,
+                            ).squeeze()
+                            return prediction_resized.cpu().numpy()
 
-                # Predict depth
-                with torch.no_grad():
-                    prediction = self.model(input_batch)
-                    prediction = torch.nn.functional.interpolate(
-                        prediction.unsqueeze(1),
-                        size=img_np.shape[:2],
-                        mode="bicubic",
-                        align_corners=False,
-                    ).squeeze()
+                    return await asyncio.to_thread(_forward)
 
-                depth_map = prediction.cpu().numpy()
+                depth_map = np.array(await _predict_midas()).astype(np.float32)
 
-                logger.info(f"Depth map estimated (MiDaS): shape={depth_map.shape}, min={depth_map.min():.2f}, max={depth_map.max():.2f}")
+                logger.info(
+                    f"Depth map estimated (MiDaS): shape={depth_map.shape}, "
+                    f"min={depth_map.min():.2f}, max={depth_map.max():.2f}"
+                )
+
+            depth_map = self._standardize_depth_map(depth_map)
 
             return depth_map
 
@@ -203,6 +215,15 @@ class DepthService:
         x2_px = max(0, min(x2_px, w))
         y2_px = max(0, min(y2_px, h))
 
+        if x1_px > x2_px:
+            x1_px, x2_px = x2_px, x1_px
+        if y1_px > y2_px:
+            y1_px, y2_px = y2_px, y1_px
+
+        if (x2_px - x1_px) < 1 or (y2_px - y1_px) < 1:
+            logger.warning("Degenerate bounding box after clamping; skipping depth extraction")
+            return 0.0, 0.0
+
         # Extract region
         region = depth_map[y1_px:y2_px, x1_px:x2_px]
 
@@ -225,8 +246,10 @@ class DepthService:
         Returns:
             Base64-encoded visualization image
         """
-        # Normalize depth map to 0-255
-        depth_normalized = cv2.normalize(depth_map, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        # Depth map is normalized so lower values should correspond to closer regions.
+        # Invert for visualization so warmer colors highlight nearer objects.
+        visualization_map = np.clip(1.0 - depth_map, 0.0, 1.0)
+        depth_normalized = (visualization_map * 255).astype(np.uint8)
 
         # Apply colormap
         depth_colored = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_MAGMA)
@@ -240,6 +263,62 @@ class DepthService:
         img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
         return f"data:image/png;base64,{img_base64}"
+
+    def _standardize_depth_map(self, depth_map: np.ndarray) -> np.ndarray:
+        """
+        Normalize depth map to [0, 1] and orient according to model configuration.
+        """
+        if not isinstance(depth_map, np.ndarray):
+            depth_map = np.array(depth_map, dtype=np.float32)
+
+        depth_map = depth_map.astype(np.float32)
+        depth_map = np.nan_to_num(depth_map, nan=0.0)
+
+        min_val = float(depth_map.min())
+        max_val = float(depth_map.max())
+
+        if max_val - min_val > 1e-6:
+            normalized = (depth_map - min_val) / (max_val - min_val)
+        else:
+            normalized = np.zeros_like(depth_map, dtype=np.float32)
+
+        if self.invert_depth_map:
+            oriented = 1.0 - normalized
+        else:
+            oriented = normalized
+
+        logger.debug(
+            "Depth map normalized%s: min=%.2f, max=%.2f -> (0=close,1=far)",
+            " and inverted" if self.invert_depth_map else "",
+            oriented.min(),
+            oriented.max()
+        )
+
+        return oriented
+
+    def _should_invert_depth(self) -> bool:
+        """
+        Determine whether to invert the normalized depth map.
+
+        Many legacy models (MiDaS/ZoeDepth) emit inverse depth (larger = closer),
+        while Depth Anything emits true depth (larger = further). Allow override
+        via DEPTH_ORIENTATION env var with values:
+          - "auto" (default): invert for MiDaS/Zoe, keep raw for Depth Anything
+          - "invert": always invert
+          - "raw": never invert
+        """
+        orientation = os.getenv("DEPTH_ORIENTATION", "auto").strip().lower()
+        if orientation == "invert":
+            return True
+        if orientation == "raw":
+            return False
+
+        # Auto-detect based on model name
+        model_lower = self.model_name.lower()
+        if "depth_anything" in model_lower:
+            return False
+        # Assume MiDaS/Zoe output inverse depth by default
+        return True
 
     @staticmethod
     def _decode_image(image_base64: str) -> Image.Image:
