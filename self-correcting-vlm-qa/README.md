@@ -35,9 +35,10 @@ Vision-Language Models can hallucinate about **relative distance, size, occlusio
 This system supports a hybrid geometry pipeline: fast 2D depth verification for common spatial questions, with an optional 3D voxel refinement stage for complex containment,       occlusion, or world-coordinate reasoning. Combining depth maps with sparse voxel grids yields more robust spatial contradiction detection while keeping latency low.
 
 Contradictions are detected using geometry signals (depth, occlusion, voxel occupancy, 3D distances, containment, etc.).
-4. **Correct (≈1‑4 s):** Claude self-reflects on contradictions and revises its answer
 
-The FastAPI backend exposes this pipeline as `/ask`, and the Streamlit UI visualizes depth overlays, contradictions, and metrics.
+3. **Self-Correct (≈1‑4 s):** Claude self-reflects on contradictions and revises its answer
+
+The backend is implemented with FastAPI, and an optional Streamlit UI displays depth maps, voxel renders, contradictions, and latency metrics.
 
 ## Getting Started
 
