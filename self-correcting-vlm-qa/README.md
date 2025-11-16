@@ -158,7 +158,7 @@ Edit `config/.env` to customize:
 ANTHROPIC_API_KEY=your_anthropic_api_key_here
 
 # Claude Configuration
-CLAUDE_VLM_MODEL=claude-4.1-sonnet
+CLAUDE_VLM_MODEL=claude-sonnet-4-20250514
 CLAUDE_TEMPERATURE=0.2
 CLAUDE_MAX_OUTPUT_TOKENS=2048
 
