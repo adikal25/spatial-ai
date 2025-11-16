@@ -7,10 +7,13 @@ python-multipart==0.0.6
 # Vision-Language Models
 anthropic==0.39.0
 
-# Depth Estimation
+# Depth Estimation & 3D Reconstruction
 torch==2.1.2
 torchvision==0.16.2
 timm==0.9.12
+triposg==0.1.5
+trimesh==4.4.3
+huggingface_hub==0.25.2
 
 # Depth Models
 # MiDaS

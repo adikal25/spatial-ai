@@ -2,7 +2,7 @@
 Self-correction service that makes Claude refine answers using geometric evidence.
 Implements explicit self-reasoning loop.
 """
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from loguru import logger
 
@@ -23,7 +23,9 @@ class CorrectionService:
         original_reasoning: str,
         contradictions: List[Contradiction],
         proof_overlay: str,
-        question: str
+        question: str,
+        reconstruction_preview: Optional[str] = None,
+        reconstruction_metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Make Claude self-correct its answer using geometric evidence.
@@ -59,7 +61,9 @@ class CorrectionService:
                 original_answer=original_answer,
                 original_reasoning=original_reasoning,
                 contradictions=contradiction_dicts,
-                proof_overlay_base64=proof_overlay
+                proof_overlay_base64=proof_overlay,
+                reconstruction_preview_base64=reconstruction_preview,
+                reconstruction_metadata=reconstruction_metadata
             )
 
             logger.info(f"Self-correction complete, confidence: {result['confidence']}")

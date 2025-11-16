@@ -15,6 +15,7 @@ Vision-Language Models (VLMs) often hallucinate about object sizes, distances, a
 - **Claude-Powered**: Uses Claude Sonnet 4 with vision capabilities and tool use
 - **Self-Reasoning Loop**: Claude explicitly reflects on its mistakes and corrects them
 - **Automated Verification**: Uses MiDaS depth estimation to validate spatial claims
+- **TripoSG Reconstruction**: Optional VR → mesh lifting for stronger spatial evidence
 - **Transparent Reasoning**: See Claude's internal reasoning and self-reflection
 - **Real-time Processing**: Target latency <8s end-to-end
 - **Visual Proof**: Generates proof overlays with depth maps and annotations
@@ -40,6 +41,17 @@ Vision-Language Models (VLMs) often hallucinate about object sizes, distances, a
 │  └──────────────────────────────────────────────────────┘   │
 └────────────────────┬────────────────────────────────────────┘
                      │ Answer + Reasoning + Bounding Boxes
+                     ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Stage 1.5: RECONSTRUCT (optional)                          │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ TripoSG 3D Reconstruction                            │   │
+│  │ - Lift VR/frames into a textured mesh                │   │
+│  │ - Mesh preview + stats per bounding box              │   │
+│  │ - Extra geometric evidence for verification          │   │
+│  └──────────────────────────────────────────────────────┘   │
+└────────────────────┬────────────────────────────────────────┘
+                     │ Mesh preview + stats
                      ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  Stage 2: VERIFY                                            │
@@ -90,7 +102,8 @@ Vision-Language Models (VLMs) often hallucinate about object sizes, distances, a
 
 - Python 3.11+
 - **Anthropic API key** (for Claude Sonnet 4)
-- (Optional) GPU for faster depth estimation
+- **Hugging Face access token** (for TripoSG weights)
+- (Optional) GPU for faster depth/depth + reconstruction
 
 ## 🚀 Quick Start
 
@@ -106,10 +119,11 @@ cd self-correcting-vlm-qa
 ./setup.sh
 ```
 
-3. **Add your Anthropic API key**
+3. **Add your API keys**
 ```bash
 # Edit config/.env and add your key
 ANTHROPIC_API_KEY=your_anthropic_api_key_here
+HUGGINGFACEHUB_API_TOKEN=your_hf_token
 ```
 
 4. **Run the demo!**
@@ -135,7 +149,7 @@ pip install -r requirements.txt
 2. **Set up environment**
 ```bash
 cp config/.env.example config/.env
-# Edit config/.env and add your Anthropic API key
+# Edit config/.env and add your Anthropic + Hugging Face keys
 ```
 
 3. **Run API (Terminal 1)**
@@ -155,6 +169,7 @@ Edit `config/.env` to customize:
 ```env
 # API Keys
 ANTHROPIC_API_KEY=your_anthropic_api_key_here
+HUGGINGFACEHUB_API_TOKEN=your_hf_token
 
 # Claude Configuration
 CLAUDE_MODEL=claude-sonnet-4-20250514
@@ -166,6 +181,8 @@ DEPTH_MODEL=midas_v3_small
 # Performance Settings
 MAX_IMAGE_SIZE=1024
 ENABLE_GPU=true
+ENABLE_TRIPO_RECONSTRUCTION=true
+TRIPOSG_DEVICE=cuda
 
 # API Configuration
 API_HOST=0.0.0.0

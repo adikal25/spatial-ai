@@ -230,7 +230,9 @@ Be precise about spatial relationships like distance, size, and position."""
         original_answer: str,
         original_reasoning: str,
         contradictions: List[Dict[str, Any]],
-        proof_overlay_base64: str
+        proof_overlay_base64: str,
+        reconstruction_preview_base64: Optional[str] = None,
+        reconstruction_metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Self-correction with explicit reasoning loop.
@@ -252,6 +254,12 @@ Be precise about spatial relationships like distance, size, and position."""
             # Preserves quality - tries compression first before resizing
             image_base64 = resize_image_if_needed(image_base64, max_size_mb=4.7, preserve_quality=True)
             proof_overlay_base64 = resize_image_if_needed(proof_overlay_base64, max_size_mb=4.7, preserve_quality=True)
+            if reconstruction_preview_base64:
+                reconstruction_preview_base64 = resize_image_if_needed(
+                    reconstruction_preview_base64,
+                    max_size_mb=4.7,
+                    preserve_quality=True
+                )
 
             # Detect media types and clean base64 strings
             if image_base64.startswith("data:image"):
@@ -281,6 +289,22 @@ Be precise about spatial relationships like distance, size, and position."""
                 proof_media_type = "image/jpeg"
 
             logger.info(f"Image formats - Original: {image_media_type}, Proof: {proof_media_type}")
+            reconstruction_media_type = None
+            if reconstruction_preview_base64:
+                if reconstruction_preview_base64.startswith("data:image"):
+                    parts = reconstruction_preview_base64.split(",")
+                    header = parts[0]
+                    if "image/png" in header:
+                        reconstruction_media_type = "image/png"
+                    elif "image/jpeg" in header or "image/jpg" in header:
+                        reconstruction_media_type = "image/jpeg"
+                    else:
+                        reconstruction_media_type = "image/png"
+                    reconstruction_preview_base64 = parts[1]
+                else:
+                    reconstruction_media_type = "image/png"
+
+                logger.info(f"TripoSG preview format: {reconstruction_media_type}")
 
             # Build contradiction evidence
             evidence_text = "\n\n".join([
@@ -291,17 +315,18 @@ Be precise about spatial relationships like distance, size, and position."""
                 for i, c in enumerate(contradictions)
             ])
 
+            reconstruction_text = ""
+            if reconstruction_metadata:
+                reconstruction_text = "\n\n## 3D Reconstruction Stats\n" + json.dumps(
+                    reconstruction_metadata,
+                    indent=2
+                )
+
             # Self-correction prompt with reasoning loop
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=4096,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": f"""# Self-Correction Task
+            content_blocks = [
+                {
+                    "type": "text",
+                    "text": f"""# Self-Correction Task
 
 You previously answered a spatial question about an image. Now you need to review your answer against geometric evidence from depth analysis.
 
@@ -315,20 +340,21 @@ You previously answered a spatial question about an image. Now you need to revie
 {original_reasoning}
 
 ## Geometric Contradictions Found
-{evidence_text}
+{evidence_text}{reconstruction_text}
 
 ## Instructions
 I'm providing you with:
 1. The original image
 2. A proof overlay showing the depth map analysis
+3. A TripoSG mesh preview (if rendered)
 
 Please engage in a self-reasoning process:
 
 1. **Review**: Re-examine the original image carefully
-2. **Analyze Depth**: Study the depth visualization (right side shows depth - warmer colors = closer)
+2. **Analyze Depth/3D**: Study the depth visualization and mesh evidence (warmer colors = closer)
 3. **Evaluate**: Compare your original reasoning with the geometric evidence
 4. **Reflect**: Identify where you may have been incorrect
-5. **Correct**: Provide a revised answer that accounts for the depth measurements
+5. **Correct**: Provide a revised answer that accounts for the depth / 3D measurements
 
 Be honest - if you made an error, acknowledge it and correct it. If the geometric evidence is wrong or you still believe your answer, explain why.
 
@@ -342,24 +368,44 @@ Provide your response in this format:
 
 **Confidence:**
 [A number from 0 to 1 indicating your confidence in the revised answer]"""
-                            },
-                            {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": image_media_type,
-                                    "data": image_base64
-                                }
-                            },
-                            {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": proof_media_type,
-                                    "data": proof_overlay_base64
-                                }
-                            }
-                        ]
+                },
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": image_media_type,
+                        "data": image_base64
+                    }
+                },
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": proof_media_type,
+                        "data": proof_overlay_base64
+                    }
+                }
+            ]
+
+            if reconstruction_preview_base64 and reconstruction_media_type:
+                content_blocks.append(
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": reconstruction_media_type,
+                            "data": reconstruction_preview_base64
+                        }
+                    }
+                )
+
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=4096,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": content_blocks
                     }
                 ]
             )

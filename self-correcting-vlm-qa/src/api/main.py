@@ -17,6 +17,7 @@ from src.services.vlm_service import VLMService
 from src.services.depth_service import DepthService
 from src.services.verifier_service import VerifierService
 from src.services.correction_service import CorrectionService
+from src.services.reconstruction_service import ReconstructionService
 
 # Load environment variables from .env (root directory)
 env_path = Path(__file__).parent.parent.parent / ".env"
@@ -35,11 +36,13 @@ async def lifespan(app: FastAPI):
     # Initialize services
     services["vlm"] = VLMService()
     services["depth"] = DepthService()
+    services["reconstruction"] = ReconstructionService()
     services["verifier"] = VerifierService(services["depth"])
     services["correction"] = CorrectionService(services["vlm"])
 
     # Load models
     await services["depth"].load_model()
+    await services["reconstruction"].load()
 
     logger.info("Services initialized successfully")
     yield
@@ -76,6 +79,7 @@ async def health_check():
         models_loaded={
             "vlm": services.get("vlm") is not None,
             "depth": services.get("depth") is not None and services["depth"].model is not None,
+            "reconstruction": services.get("reconstruction") is not None and services["reconstruction"].is_ready(),
         }
     )
 
@@ -106,6 +110,19 @@ async def ask_question(request: QuestionRequest):
         latency["ask_ms"] = (time.time() - start_time) * 1000
         logger.info(f"Stage 1 completed in {latency['ask_ms']:.0f}ms")
 
+        # Stage 1.5: Optional TripoSG reconstruction
+        reconstruction_result = None
+        reconstruction_preview = None
+        if services.get("reconstruction") and services["reconstruction"].enabled:
+            logger.info("Stage 1.5: Running TripoSG reconstruction")
+            start_time = time.time()
+            reconstruction_result = await services["reconstruction"].reconstruct(request.image)
+            reconstruction_preview = reconstruction_result.preview_base64 if reconstruction_result else None
+            latency["reconstruct_ms"] = (time.time() - start_time) * 1000
+            logger.info(f"Stage 1.5 completed in {latency['reconstruct_ms']:.0f}ms")
+        else:
+            latency["reconstruct_ms"] = 0
+
         # Stage 2: Verify with depth geometry
         logger.info("Stage 2: Verifying with depth geometry")
         start_time = time.time()
@@ -113,7 +130,8 @@ async def ask_question(request: QuestionRequest):
         verification_result = await services["verifier"].verify(
             image_base64=request.image,
             vlm_response=initial_response,
-            question=request.question
+            question=request.question,
+            reconstruction=reconstruction_result
         )
 
         latency["verify_ms"] = (time.time() - start_time) * 1000
@@ -134,7 +152,9 @@ async def ask_question(request: QuestionRequest):
                 original_reasoning=initial_response.get("reasoning", ""),
                 contradictions=verification_result.contradictions,
                 proof_overlay=verification_result.proof_overlay,
-                question=request.question
+                question=request.question,
+                reconstruction_preview=reconstruction_preview or verification_result.reconstruction_preview,
+                reconstruction_metadata=verification_result.reconstruction_metadata
             )
 
             revised_answer = correction_result["revised_answer"]
@@ -167,7 +187,9 @@ async def ask_question(request: QuestionRequest):
                 "model_used": initial_response.get("model", "unknown"),
                 "contradictions_found": len(verification_result.contradictions),
                 "original_reasoning": initial_response.get("reasoning", "")
-            }
+            },
+            reconstruction_preview=reconstruction_preview or verification_result.reconstruction_preview,
+            reconstruction_metadata=verification_result.reconstruction_metadata
         )
 
     except Exception as e:

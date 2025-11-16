@@ -3,15 +3,19 @@ Geometric verification service that detects contradictions in VLM responses.
 Uses depth estimation and geometric analysis.
 """
 import base64
-import numpy as np
-from typing import Dict, Any, List
 from io import BytesIO
+from typing import Any, Dict, List, Optional
 
 import cv2
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from loguru import logger
 
 from src.models.schemas import BoundingBox, SpatialMetrics, Contradiction
+from src.services.reconstruction_service import (
+    ReconstructionResult,
+    compute_mesh_object_stats,
+)
 
 
 class VerificationResult:
@@ -21,11 +25,15 @@ class VerificationResult:
         self,
         spatial_metrics: List[SpatialMetrics],
         contradictions: List[Contradiction],
-        proof_overlay: str
+        proof_overlay: str,
+        reconstruction_preview: Optional[str] = None,
+        reconstruction_metadata: Optional[Dict[str, Any]] = None
     ):
         self.spatial_metrics = spatial_metrics
         self.contradictions = contradictions
         self.proof_overlay = proof_overlay
+        self.reconstruction_preview = reconstruction_preview
+        self.reconstruction_metadata = reconstruction_metadata
 
 
 class VerifierService:
@@ -43,7 +51,8 @@ class VerifierService:
         self,
         image_base64: str,
         vlm_response: Dict[str, Any],
-        question: str
+        question: str,
+        reconstruction: Optional[ReconstructionResult] = None
     ) -> VerificationResult:
         """
         Verify VLM response using depth geometry.
@@ -66,6 +75,9 @@ class VerifierService:
                 vlm_response.get("bounding_boxes", [])
             )
 
+            if reconstruction and reconstruction.mesh:
+                self._inject_mesh_metrics(spatial_metrics, reconstruction.mesh)
+
             # Detect contradictions
             contradictions = self._detect_contradictions(
                 vlm_response["answer"],
@@ -74,11 +86,13 @@ class VerifierService:
             )
 
             # Create proof overlay
+            reconstruction_preview = reconstruction.preview_base64 if reconstruction else None
             proof_overlay = self._create_proof_overlay(
                 image_base64,
                 depth_map,
                 spatial_metrics,
-                contradictions
+                contradictions,
+                reconstruction_preview=reconstruction_preview
             )
 
             logger.info(f"Verification complete: {len(contradictions)} contradictions found")
@@ -86,7 +100,9 @@ class VerifierService:
             return VerificationResult(
                 spatial_metrics=spatial_metrics,
                 contradictions=contradictions,
-                proof_overlay=proof_overlay
+                proof_overlay=proof_overlay,
+                reconstruction_preview=reconstruction_preview,
+                reconstruction_metadata=reconstruction.metadata if reconstruction else None
             )
 
         except Exception as e:
@@ -137,6 +153,23 @@ class VerifierService:
             metrics.append(metric)
 
         return metrics
+
+    @staticmethod
+    def _inject_mesh_metrics(
+        metrics: List[SpatialMetrics],
+        mesh
+    ) -> None:
+        """Augment metrics with coarse 3D stats from the reconstructed mesh."""
+        if not metrics:
+            return
+
+        for metric in metrics:
+            stats = compute_mesh_object_stats(mesh, metric.bounding_box)
+            if not stats:
+                continue
+            metric.mesh_centroid = stats.centroid
+            metric.mesh_extent = stats.extent
+            metric.mesh_point_count = stats.point_count
 
     def _detect_contradictions(
         self,
@@ -191,9 +224,12 @@ class VerifierService:
                 obj1 = metrics[i]
                 obj2 = metrics[j]
 
+                depth1 = self._get_depth_anchor(obj1)
+                depth2 = self._get_depth_anchor(obj2)
+
                 # Check depth difference
-                depth_diff = abs(obj1.depth_mean - obj2.depth_mean)
-                avg_depth = (obj1.depth_mean + obj2.depth_mean) / 2
+                depth_diff = abs(depth1 - depth2)
+                avg_depth = (depth1 + depth2) / 2
 
                 if avg_depth > 0:
                     relative_diff = depth_diff / avg_depth
@@ -201,15 +237,22 @@ class VerifierService:
                     # Look for distance claims in answer
                     if relative_diff > self.relative_distance_threshold:
                         # Significant depth difference detected
-                        closer_obj = obj1 if obj1.depth_mean < obj2.depth_mean else obj2
-                        further_obj = obj2 if obj1.depth_mean < obj2.depth_mean else obj1
+                        closer_obj = obj1 if depth1 < depth2 else obj2
+                        further_obj = obj2 if depth1 < depth2 else obj1
+                        closer_depth = depth1 if closer_obj is obj1 else depth2
+                        further_depth = depth2 if closer_obj is obj1 else depth1
 
                         # This is a simplified check - in practice, need NLP analysis
                         if "same distance" in answer_lower or "equal distance" in answer_lower:
                             contradictions.append(Contradiction(
                                 type="distance",
                                 claim=f"Objects at same distance",
-                                evidence=f"{closer_obj.object_id} (depth={closer_obj.depth_mean:.1f}) is significantly closer than {further_obj.object_id} (depth={further_obj.depth_mean:.1f})",
+                                evidence=(
+                                    f"{closer_obj.object_id} "
+                                    f"({self._format_depth_hint(closer_obj, closer_depth)}) is "
+                                    f"significantly closer than {further_obj.object_id} "
+                                    f"({self._format_depth_hint(further_obj, further_depth)})"
+                                ),
                                 severity=0.7
                             ))
 
@@ -229,8 +272,8 @@ class VerifierService:
                 obj1 = metrics[i]
                 obj2 = metrics[j]
 
-                size1 = obj1.estimated_size["width"] * obj1.estimated_size["height"]
-                size2 = obj2.estimated_size["width"] * obj2.estimated_size["height"]
+                size1 = self._get_size_estimate(obj1)
+                size2 = self._get_size_estimate(obj2)
 
                 if size1 > 0 and size2 > 0:
                     size_ratio = max(size1, size2) / min(size1, size2)
@@ -285,7 +328,8 @@ class VerifierService:
         image_base64: str,
         depth_map: np.ndarray,
         spatial_metrics: List[SpatialMetrics],
-        contradictions: List[Contradiction]
+        contradictions: List[Contradiction],
+        reconstruction_preview: Optional[str] = None
     ) -> str:
         """
         Create proof overlay image with depth visualization and annotations.
@@ -314,11 +358,22 @@ class VerifierService:
         # Resize to match original
         depth_img = depth_img.resize(img.size)
 
+        preview_img = None
+        if reconstruction_preview:
+            try:
+                preview_img = self._decode_base64_image(reconstruction_preview).resize(img.size)
+            except Exception as exc:
+                logger.warning(f"Unable to decode reconstruction preview: {exc}")
+                preview_img = None
+
         # Create side-by-side comparison
-        combined_width = img.width * 2
+        panels = 3 if preview_img else 2
+        combined_width = img.width * panels
         combined = Image.new("RGB", (combined_width, img.height))
         combined.paste(img, (0, 0))
         combined.paste(depth_img, (img.width, 0))
+        if preview_img:
+            combined.paste(preview_img, (img.width * 2, 0))
 
         # Draw annotations
         draw = ImageDraw.Draw(combined)
@@ -339,12 +394,24 @@ class VerifierService:
             draw.rectangle([x1 + img.width, y1, x2 + img.width, y2], outline="yellow", width=2)
             draw.text((x1 + img.width, y1 - 15), f"d={metric.depth_mean:.1f}", fill="yellow")
 
+        if preview_img:
+            draw.text((img.width * 2 + 10, 10), "TripoSG mesh", fill="white")
+
         # Encode to base64
         buffered = BytesIO()
         combined.save(buffered, format="PNG")
         img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
         return f"data:image/png;base64,{img_base64}"
+
+    @staticmethod
+    def _decode_base64_image(image_base64: str) -> Image.Image:
+        """Decode base64 string or data URL into PIL image."""
+        if image_base64.startswith("data:image"):
+            _, encoded = image_base64.split(",", maxsplit=1)
+        else:
+            encoded = image_base64
+        return Image.open(BytesIO(base64.b64decode(encoded)))
 
     @staticmethod
     def _depth_to_distance(depth_value: float) -> float:
@@ -359,3 +426,27 @@ class VerifierService:
         """
         # This is a rough approximation - would need calibration for real distances
         return depth_value / 10.0
+
+    @staticmethod
+    def _get_depth_anchor(metric: SpatialMetrics) -> float:
+        """Prefer mesh-derived depth if available."""
+        if metric.mesh_centroid and len(metric.mesh_centroid) >= 3:
+            return float(metric.mesh_centroid[2])
+        return float(metric.depth_mean)
+
+    @staticmethod
+    def _format_depth_hint(metric: SpatialMetrics, value: float) -> str:
+        """Format textual hint depending on available cues."""
+        if metric.mesh_centroid:
+            return f"z={value:.2f}"
+        return f"depth={value:.2f}"
+
+    @staticmethod
+    def _get_size_estimate(metric: SpatialMetrics) -> float:
+        """Combine mesh extents and 2D box into comparable scalar."""
+        if metric.mesh_extent and len(metric.mesh_extent) == 3:
+            extent = np.maximum(np.array(metric.mesh_extent), 1e-6)
+            return float(extent[0] * extent[1] * extent[2])
+
+        size = metric.estimated_size
+        return float(size["width"] * size["height"])

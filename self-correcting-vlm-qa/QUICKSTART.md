@@ -22,9 +22,11 @@ Create a `.env` file in the `config` folder:
 cp config/.env.example config/.env
 ```
 
-Edit `config/.env` and add your Anthropic API key:
+Edit `config/.env` and add your Anthropic + Hugging Face keys:
 ```env
 ANTHROPIC_API_KEY=your_anthropic_api_key_here
+HUGGINGFACEHUB_API_TOKEN=your_hf_token
+ENABLE_TRIPO_RECONSTRUCTION=true  # disable if you don't need 3D meshes
 ```
 
 ## 3. Run the Demo
@@ -64,9 +66,10 @@ python example_usage.py
 
 The system will:
 1. **Ask**: Claude generates initial answer with reasoning
-2. **Verify**: Depth maps check Claude's spatial claims
-3. **Self-Correct**: Claude explicitly reflects on errors and corrects them
-4. **Show**: See Claude's self-reflection and proof overlays
+2. **Reconstruct (optional)**: TripoSG lifts the image/VR frame into a textured 3D mesh
+3. **Verify**: Depth maps + mesh stats check Claude's spatial claims
+4. **Self-Correct**: Claude explicitly reflects on errors and corrects them
+5. **Show**: See Claude's self-reflection, TripoSG preview, and proof overlays
 
 ✨ **Key Feature**: Claude uses an explicit self-reasoning loop to acknowledge mistakes and correct them honestly!
 
