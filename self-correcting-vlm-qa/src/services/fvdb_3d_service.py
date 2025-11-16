@@ -36,6 +36,8 @@ class Scene3D:
     origin: torch.Tensor  # (3,) world-space origin
     voxel_size: float
     image_size: Tuple[int, int]
+    points: Optional[torch.Tensor] = None  # (N, 3) backprojected points (cpu)
+    pixel_coords: Optional[torch.Tensor] = None  # (N, 2) [u, v] pixels for each point
 
     @property
     def voxel_count(self) -> int:
@@ -141,6 +143,7 @@ class Fvdb3DReconstructionService:
         x = (u_valid - cx_t) * z_valid / fx_t
         y = (v_valid - cy_t) * z_valid / fy_t
         points = torch.stack([x, y, z_valid], dim=-1)  # (N, 3)
+        pixel_coords = torch.stack([u_valid, v_valid], dim=-1)  # (N, 2)
 
         # Define origin and voxel indices
         origin = points.min(dim=0).values
@@ -175,6 +178,8 @@ class Fvdb3DReconstructionService:
             origin=origin,
             voxel_size=voxel_size,
             image_size=(h, w),
+            points=points.detach().to("cpu"),
+            pixel_coords=pixel_coords.detach().to("cpu"),
         )
 
     def compute_object_geometry(
@@ -208,7 +213,15 @@ class Fvdb3DReconstructionService:
 
         centroids: List[Optional[np.ndarray]] = []
         for bbox in bounding_boxes:
-            c = self._bbox_to_centroid(depth_map, bbox, fx, fy, cx, cy)
+            c = self._bbox_to_centroid(
+                depth_map,
+                bbox,
+                fx,
+                fy,
+                cx,
+                cy,
+                scene=scene,
+            )
             centroids.append(c)
 
         pairwise: Dict[Tuple[int, int], float] = {}
@@ -237,6 +250,7 @@ class Fvdb3DReconstructionService:
         fy: float,
         cx: float,
         cy: float,
+        scene: Optional[Scene3D] = None,
     ) -> Optional[np.ndarray]:
         """
         Compute approximate 3D centroid for a bounding box region.
@@ -253,6 +267,25 @@ class Fvdb3DReconstructionService:
 
         if x2_px <= x1_px or y2_px <= y1_px:
             return None
+
+        if (
+            scene is not None
+            and scene.points is not None
+            and scene.pixel_coords is not None
+        ):
+            uv = scene.pixel_coords
+            pts = scene.points
+            mask = (
+                (uv[:, 0] >= float(x1_px))
+                & (uv[:, 0] < float(x2_px))
+                & (uv[:, 1] >= float(y1_px))
+                & (uv[:, 1] < float(y2_px))
+            )
+            if mask.any():
+                pts_in_box = pts[mask]
+                if pts_in_box.shape[0] > 0:
+                    centroid = pts_in_box.mean(dim=0)
+                    return centroid.detach().cpu().numpy()
 
         region = depth_map[y1_px:y2_px, x1_px:x2_px]
         if region.size == 0:
