@@ -2,9 +2,9 @@
 
 This project implements automated verification and self-correction for spatial questions by combining Claude Sonnet 4 with geometric reasoning. It supports two geometry backends:
 
-  1. Depth-based 2D geometry (Depth Anything V2)
+ 1. Depth-based 2D geometry (Depth Anything V2)
 
-  2. Experimental 3D voxel geometry (NVIDIA FVDB)
+ 2. Experimental 3D voxel geometry (NVIDIA FVDB)
 
 The system reduces spatial hallucinations by detecting contradictions using depth or voxel geometry, then prompting Claude to self-correct using explicit evidence.
 
