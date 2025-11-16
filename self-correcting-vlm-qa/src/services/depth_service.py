@@ -142,20 +142,36 @@ class DepthService:
         """
         h, w = depth_map.shape
 
-        # Convert normalized coordinates to pixel coordinates
-        if normalized:
-            x1_px = int(x1 * w)
-            y1_px = int(y1 * h)
-            x2_px = int(x2 * w)
-            y2_px = int(y2 * h)
+        # Detect whether coordinates appear normalized; fall back to absolute if needed.
+        coords = np.array([x1, y1, x2, y2], dtype=float)
+        coords_are_normalized = normalized and np.all((coords >= -0.05) & (coords <= 1.05))
+
+        if coords_are_normalized:
+            x1_px = int(coords[0] * w)
+            y1_px = int(coords[1] * h)
+            x2_px = int(coords[2] * w)
+            y2_px = int(coords[3] * h)
         else:
-            x1_px, y1_px, x2_px, y2_px = int(x1), int(y1), int(x2), int(y2)
+            x1_px = int(coords[0])
+            y1_px = int(coords[1])
+            x2_px = int(coords[2])
+            y2_px = int(coords[3])
 
         # Ensure coordinates are within bounds
         x1_px = max(0, min(x1_px, w - 1))
         y1_px = max(0, min(y1_px, h - 1))
         x2_px = max(0, min(x2_px, w))
         y2_px = max(0, min(y2_px, h))
+
+        if x2_px <= x1_px or y2_px <= y1_px:
+            logger.debug(
+                f"DepthService: empty bbox after conversion (coords={coords.tolist()} normalized_detected={coords_are_normalized})"
+            )
+            return 0.0, 0.0
+
+        logger.debug(
+            f"DepthService: bbox converted to pixels ({x1_px},{y1_px})->({x2_px},{y2_px}) normalized_detected={coords_are_normalized}"
+        )
 
         # Extract region
         region = depth_map[y1_px:y2_px, x1_px:x2_px]
@@ -166,6 +182,10 @@ class DepthService:
 
         mean_depth = float(np.mean(region))
         std_depth = float(np.std(region))
+
+        logger.debug(
+            f"DepthService: stats mean={mean_depth:.3f} std={std_depth:.3f} pixels={region.size}"
+        )
 
         return mean_depth, std_depth
 

@@ -239,7 +239,7 @@ class Fvdb3DReconstructionService:
 
         if centroids:
             logger.debug(
-                "fVDB centroid summary: %s",
+                "fVDB centroid summary: {}",
                 [
                     (
                         idx,
@@ -250,7 +250,7 @@ class Fvdb3DReconstructionService:
             )
         if pairwise:
             logger.debug(
-                "fVDB pairwise distances: %s",
+                "fVDB pairwise distances: {}",
                 {f"{i}-{j}": float(d) for (i, j), d in pairwise.items()},
             )
 
@@ -278,16 +278,33 @@ class Fvdb3DReconstructionService:
         """
         h, w = depth_map.shape
 
-        # Convert normalized [0,1] coords to pixels
-        x1_px = int(max(0, min(bbox.x1 * w, w - 1)))
-        y1_px = int(max(0, min(bbox.y1 * h, h - 1)))
-        x2_px = int(max(0, min(bbox.x2 * w, w)))
-        y2_px = int(max(0, min(bbox.y2 * h, h)))
+        coords = np.array([bbox.x1, bbox.y1, bbox.x2, bbox.y2], dtype=float)
+        coords_are_normalized = np.all((coords >= -0.05) & (coords <= 1.05))
+        bbox_label = bbox.label or f"obj_{obj_index}"
+
+        if coords_are_normalized:
+            x1_px = int(coords[0] * w)
+            y1_px = int(coords[1] * h)
+            x2_px = int(coords[2] * w)
+            y2_px = int(coords[3] * h)
+        else:
+            x1_px = int(coords[0])
+            y1_px = int(coords[1])
+            x2_px = int(coords[2])
+            y2_px = int(coords[3])
+
+        x1_px = max(0, min(x1_px, w - 1))
+        y1_px = max(0, min(y1_px, h - 1))
+        x2_px = max(0, min(x2_px, w))
+        y2_px = max(0, min(y2_px, h))
+
+        logger.debug(
+            f"fVDB bbox conversion: idx={obj_index} label={bbox_label} coords={coords.tolist()} "
+            f"normalized_detected={coords_are_normalized} -> pixels ({x1_px},{y1_px})->({x2_px},{y2_px})"
+        )
 
         if x2_px <= x1_px or y2_px <= y1_px:
             return None
-
-        bbox_label = bbox.label or f"obj_{obj_index}"
 
         if (
             scene is not None
@@ -308,20 +325,14 @@ class Fvdb3DReconstructionService:
                 if pts_in_box.shape[0] > 0:
                     centroid = pts_in_box.mean(dim=0)
                     logger.debug(
-                        "fVDB centroid via voxels: idx=%s label=%s voxels=%d centroid=(%.3f, %.3f, %.3f)",
-                        obj_index,
-                        bbox_label,
-                        voxels_in_box,
-                        float(centroid[0]),
-                        float(centroid[1]),
-                        float(centroid[2]),
+                        f"fVDB centroid via voxels: idx={obj_index} label={bbox_label} "
+                        f"voxels={voxels_in_box} centroid=({float(centroid[0]):.3f}, "
+                        f"{float(centroid[1]):.3f}, {float(centroid[2]):.3f})"
                     )
                     return centroid.detach().cpu().numpy()
             logger.debug(
-                "fVDB centroid via voxels unavailable: idx=%s label=%s voxels=%d (falling back to depth map)",
-                obj_index,
-                bbox_label,
-                voxels_in_box,
+                f"fVDB centroid via voxels unavailable: idx={obj_index} label={bbox_label} "
+                f"voxels={voxels_in_box} (falling back to depth map)"
             )
 
         region = depth_map[y1_px:y2_px, x1_px:x2_px]
@@ -351,16 +362,8 @@ class Fvdb3DReconstructionService:
 
         centroid = np.array([X, Y, Z], dtype=np.float32)
         logger.debug(
-            "Centroid via depth map: idx=%s label=%s pixels=(%d,%d)->(%d,%d) centroid=(%.3f, %.3f, %.3f) mask_pixels=%d",
-            obj_index,
-            bbox_label,
-            x1_px,
-            y1_px,
-            x2_px,
-            y2_px,
-            float(X),
-            float(Y),
-            float(Z),
-            int(mask.sum()),
+            f"Centroid via depth map: idx={obj_index} label={bbox_label} "
+            f"pixels=({x1_px},{y1_px})->({x2_px},{y2_px}) centroid=({float(X):.3f}, "
+            f"{float(Y):.3f}, {float(Z):.3f}) mask_pixels={int(mask.sum())}"
         )
         return centroid
