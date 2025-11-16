@@ -37,17 +37,17 @@ API_URL = st.text_input(
 with st.sidebar:
     st.header("⚙️ Configuration")
 
-    st.markdown("**Model:** Anthropic Claude 3.5 Sonnet")
+    st.markdown("**Model:** Anthropic Claude Sonnet 4")
 
     st.markdown("---")
     st.markdown("### About")
     st.markdown("""
     This system addresses VLM hallucinations in spatial reasoning by:
-    - Using Claude 3.5 Sonnet with a self-reasoning loop
+    - Using Claude Sonnet 4 with a self-reasoning loop
     - Automatically verifying claims with depth geometry
     - Detecting contradictions in size, distance, and count
-    - Claude 3.5 Sonnet self-corrects with geometric evidence
-    - Shows Claude 3.5 Sonnet's self-reflection process
+    - Claude Sonnet 4 self-corrects with geometric evidence
+    - Shows Claude Sonnet 4's self-reflection process
     """)
 
 # Main content
@@ -128,7 +128,7 @@ with col2:
                 st.success(result["revised_answer"])
 
                 if result.get("self_reflection"):
-                    with st.expander("🤔 Claude 3.5 Sonnet's Self-Reflection"):
+                    with st.expander("🤔 Claude Sonnet 4's Self-Reflection"):
                         st.markdown(result["self_reflection"])
 
                 st.metric(
@@ -246,7 +246,7 @@ st.markdown("---")
 st.markdown(
     """
     <div style="text-align: center; color: #666;">
-        Built with Anthropic Claude 3.5 Sonnet, FastAPI, MiDaS Depth Estimation, and Streamlit
+        Built with Anthropic Claude Sonnet 4, FastAPI, MiDaS Depth Estimation, and Streamlit
     </div>
     """,
     unsafe_allow_html=True

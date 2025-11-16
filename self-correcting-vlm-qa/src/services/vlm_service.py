@@ -23,7 +23,7 @@ class VLMService:
             raise ValueError("ANTHROPIC_API_KEY not found in environment variables")
 
         self.client = Anthropic(api_key=api_key)
-        self.model = os.getenv("CLAUDE_VLM_MODEL", "claude-3-5-sonnet-20240620")
+        self.model = os.getenv("CLAUDE_VLM_MODEL", "claude-4.1-sonnet")
         self.temperature = float(os.getenv("CLAUDE_TEMPERATURE", "0.2"))
         self.max_output_tokens = int(os.getenv("CLAUDE_MAX_OUTPUT_TOKENS", "2048"))
 
