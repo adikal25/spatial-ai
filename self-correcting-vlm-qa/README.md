@@ -175,24 +175,30 @@ self-correcting-vlm-qa/
 ├── QUICKSTART.md                 # Step-by-step setup guide
 ├── DEPLOYMENT.md                 # Cloud deployment instructions
 ├── requirements.txt              # Python dependencies
-├── Makefile                      # Common commands
-├── setup.sh                      # Automated setup script
-├── run_demo.sh                   # Start API + Streamlit together
-├── example_usage.py              # Python client example
+├── Makefile                      # Common developer commands
+├── setup.sh                      # Automated environment setup
+├── run_demo.sh                   # Launch API + demo UI together
+├── example_usage.py              # Python usage example (client)
 ├── config/
-│   └── .env.example              # Environment variable template
+│   ├── .env.example              # Environment variable template
+│   ├── depth_models/             # Depth Anything / MiDaS weights
+│   └── voxel_models/             # FVDB voxel model configs
 ├── demo/
-│   └── app.py                    # Streamlit front-end
+│   └── app.py                    # Streamlit front-end demo
 ├── src/
-│   ├── api/main.py               # FastAPI application
-│   ├── models/schemas.py         # Pydantic models
+│   ├── api/main.py               # FastAPI application entrypoint
+│   ├── models/schemas.py         # Pydantic request/response models
 │   ├── services/
-│   │   ├── vlm_service.py        # Claude interaction
-│   │   ├── depth_service.py      # Depth Anything V2 / MiDaS
-│   │   └── verifier_service.py   # Claim validation + overlays
-│   └── utils/image_utils.py      # Image processing utilities
+│   │   ├── vlm_service.py        # Claude ask + reflect pipeline
+│   │   ├── depth_service.py      # 2D depth estimation routines
+│   │   ├── voxel_service.py      # 3D voxel reconstruction (FVDB)
+│   │   └── verifier_service.py   # Geometry checks + contradictions
+│   └── utils/
+│       ├── image_utils.py        # Image preprocessing helpers
+│       └── voxel_utils.py        # Voxel grid utilities
 └── tests/
-    └── test_api.py               # API tests
+    └── test_api.py               # API tests (unit + integration)
+
 ```
 
 ## Configuration
