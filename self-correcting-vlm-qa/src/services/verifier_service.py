@@ -5,7 +5,7 @@ Uses depth estimation, geometric analysis, and optional 3D reconstruction via fV
 """
 import base64
 from io import BytesIO
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -422,28 +422,35 @@ class VerifierService:
         # Draw annotations
         draw = ImageDraw.Draw(combined)
 
-        for metric in spatial_metrics:
+        centroid_color = "#00FF7F"  # bright green
+        text_color = "#FF3030"  # vivid red for numbering
+
+        for idx, metric in enumerate(spatial_metrics):
             bbox = metric.bounding_box
-            x1 = int(bbox.x1 * img.width)
-            y1 = int(bbox.y1 * img.height)
-            x2 = int(bbox.x2 * img.width)
-            y2 = int(bbox.y2 * img.height)
+            x1, y1, x2, y2 = self._bbox_to_pixels(bbox, img.width, img.height)
 
-            # Draw on original image
-            draw.rectangle([x1, y1, x2, y2], outline="green", width=2)
-            draw.text((x1, y1 - 15), f"{bbox.label or 'obj'}", fill="green")
+            if x2 <= x1 or y2 <= y1:
+                continue
 
-            # Draw on depth map
-            draw.rectangle(
-                [x1 + img.width, y1, x2 + img.width, y2],
-                outline="yellow",
-                width=2,
-            )
-            draw.text(
-                (x1 + img.width, y1 - 15),
-                f"d={metric.depth_mean:.1f}",
-                fill="yellow",
-            )
+            number_label = str(idx)
+            text_y = max(0, y1 - 18)
+
+            # Draw bounding box + label on original image (left panel)
+            draw.rectangle([x1, y1, x2, y2], outline="white", width=2)
+            draw.text((x1, text_y), number_label, fill=text_color)
+
+            # Mark centroid (approximate center of box)
+            cx = (x1 + x2) / 2
+            cy = (y1 + y2) / 2
+            draw.ellipse([cx - 4, cy - 4, cx + 4, cy + 4], fill=centroid_color, outline=centroid_color)
+
+            # Mirror annotations on depth visualization (right panel)
+            dx1 = x1 + img.width
+            dx2 = x2 + img.width
+            draw.rectangle([dx1, y1, dx2, y2], outline="white", width=2)
+            draw.text((dx1, text_y), number_label, fill=text_color)
+            dx = cx + img.width
+            draw.ellipse([dx - 4, cy - 4, dx + 4, cy + 4], fill=centroid_color, outline=centroid_color)
 
         # Encode to base64
         buffered = BytesIO()
@@ -451,6 +458,30 @@ class VerifierService:
         img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
         return f"data:image/png;base64,{img_base64}"
+
+    @staticmethod
+    def _bbox_to_pixels(bbox: BoundingBox, width: int, height: int) -> Tuple[int, int, int, int]:
+        """Convert potentially normalized bbox coordinates into pixel units."""
+        coords = np.array([bbox.x1, bbox.y1, bbox.x2, bbox.y2], dtype=float)
+        normalized_guess = np.all((coords >= -0.05) & (coords <= 1.05))
+
+        if normalized_guess:
+            x1 = int(coords[0] * width)
+            y1 = int(coords[1] * height)
+            x2 = int(coords[2] * width)
+            y2 = int(coords[3] * height)
+        else:
+            x1 = int(coords[0])
+            y1 = int(coords[1])
+            x2 = int(coords[2])
+            y2 = int(coords[3])
+
+        x1 = max(0, min(x1, width - 1))
+        y1 = max(0, min(y1, height - 1))
+        x2 = max(0, min(x2, width))
+        y2 = max(0, min(y2, height))
+
+        return x1, y1, x2, y2
 
     @staticmethod
     def _depth_to_distance(depth_value: float) -> float:
