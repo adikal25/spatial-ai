@@ -1,6 +1,12 @@
 # 🔍 Self-Correcting Vision-Language QA with Claude
 
-Automated verification and self-correction for spatial questions that pairs **Claude Sonnet 4** with depth geometry, contradiction detection, and an explicit reflection loop.
+This project implements automated verification and self-correction for spatial questions by combining Claude Sonnet 4 with geometric reasoning. It supports two geometry backends:
+
+1.Depth-based 2D geometry (Depth Anything V2)
+
+2.Experimental 3D voxel geometry (NVIDIA FVDB)
+
+The system reduces spatial hallucinations by detecting contradictions using depth or voxel geometry, then prompting Claude to self-correct using explicit evidence.
 
 ## Contents
 - [Overview](#overview)
