@@ -274,7 +274,6 @@ Runs the full **Ask → Verify → Self-Correct** pipeline.
   }
 }
 
-
 **Key fields:**
 - `detected_objects` - Normalized coordinates (0‑1)
 - `spatial_metrics.estimated_distance` - Relative depth (0‑100, no absolute scale)
